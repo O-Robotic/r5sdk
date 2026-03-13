@@ -512,6 +512,7 @@ void DetourAddress() // Test the sigscan results
 void DetourRegister() // Register detour classes to be searched and hooked.
 {
 	// Tier0
+	REGISTER(VMemOverride);
 	REGISTER(VPlatform);
 	REGISTER(VJobThread);
 	REGISTER(VThreadTools);
