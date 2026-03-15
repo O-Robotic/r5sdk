@@ -360,6 +360,14 @@ void ConVar_InitShipped(void)
 #ifndef DEDICATED
 	language_cvar->InstallChangeCallback(LanguageChanged_f, nullptr, false);
 #endif // !DEDICATED
+
+	ConVar* const net_compresspackets = g_pCVar->FindVar("net_compresspackets");
+	net_compresspackets->RemoveFlags(FCVAR_DEVELOPMENTONLY);
+	net_compresspackets->AddFlags(FCVAR_RELEASE);
+
+	ConVar* const net_compresspackets_minsize = g_pCVar->FindVar("net_compresspackets_minsize");
+	net_compresspackets_minsize->RemoveFlags(FCVAR_DEVELOPMENTONLY);
+	net_compresspackets_minsize->AddFlags(FCVAR_RELEASE);
 }
 
 //-----------------------------------------------------------------------------

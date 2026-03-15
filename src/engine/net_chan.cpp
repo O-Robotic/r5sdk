@@ -548,7 +548,7 @@ bool CNetChan::SendSubChannelData(bf_write* pBuff)
             pBuff->WriteOneBit(pFragment->isCompressed);
             if (pFragment->isCompressed)
             {
-                pBuff->WriteUBitLong(static_cast<NetPacketCompressionMethod_e>(net_compression_method.GetInt()), 8);
+                //pBuff->WriteUBitLong(static_cast<NetPacketCompressionMethod_e>(net_compression_method.GetInt()), 8);
                 pBuff->WriteUBitLong(static_cast<unsigned int>(pFragment->uncompressedSize), 22);
             }
         }
@@ -687,7 +687,8 @@ bool CNetChan::ReadSubChannelData(bf_read* buf)
             bCompressed = buf->ReadOneBit();
             if (bCompressed)
             {
-                compressionMethod = static_cast<NetPacketCompressionMethod_e>(buf->ReadUBitLong(8));
+                compressionMethod = LZSS;
+                //compressionMethod = static_cast<NetPacketCompressionMethod_e>(buf->ReadUBitLong(8));
                 nUncompressedSize = buf->ReadUBitLong(22);
             }
             else

@@ -1,0 +1,32 @@
+{
+    "version": 5,
+    "configurePresets":[
+        {
+            "name": "x64-debug-msvc-v1451",
+            "displayName": "x64 Debug (MSVC v14.51)",
+            "description": "Standalone preset for MSVC v14.51",
+            "generator": "Visual Studio 18 2026",
+          
+            "toolset": {
+                "value": "v145,host=x64,version=14.51"
+            },
+            "cacheVariables": {
+                "CMAKE_GENERATOR_INSTANCE": "C:/Program Files/Microsoft Visual Studio/18/Community"
+            }
+        }
+    ],
+    "buildPresets":[
+        {
+            "name": "msvc-v1451-debug",
+            "displayName": "Build Debug",
+            "configurePreset": "x64-debug-msvc-v1451",
+            "configuration": "Debug"
+        },
+        {
+            "name": "msvc-v1451-release",
+            "displayName": "Build Release",
+            "configurePreset": "x64-debug-msvc-v1451",
+            "configuration": "Release"
+        }
+    ]
+}
