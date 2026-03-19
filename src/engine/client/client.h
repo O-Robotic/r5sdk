@@ -135,7 +135,7 @@ public: // Hook statics:
 private:
 	// Stub reimplementation to avoid the 'no overrider' compiler errors in the
 	// CServer class (contains a static array of MAX_PLAYERS of this class).
-	virtual void* ConnectionStart(INetChannelHandler* chan) { return nullptr; }
+	virtual void ConnectionStart(CNetChan* pNetChan) { return; }
 	virtual void ConnectionClosing(const char* reason, int unk) {}
 	virtual void ConnectionCrashed(const char* reason) {}
 	virtual void PacketStart(int incoming_sequence, int outgoing_acknowledged) {}

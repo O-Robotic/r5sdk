@@ -54,7 +54,7 @@ class INetChannelHandler
 {
 public:
 	virtual ~INetChannelHandler(void) {};
-	virtual void*ConnectionStart(INetChannelHandler* chan) = 0;
+	virtual void ConnectionStart(class CNetChan* pNetChan) = 0;
 	virtual void ConnectionClosing(const char* reason, int unk) = 0;
 	virtual void ConnectionCrashed(const char* reason) = 0;
 	virtual void PacketStart(int incoming_sequence, int outgoing_acknowledged) = 0;
