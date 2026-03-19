@@ -169,7 +169,7 @@ public:
 	// Set the size by which it grows when it needs to allocate more memory.
 	void SetGrowSize(int size) { m_Memory.SetGrowSize(size); }
 
-	int NumAllocated() const;	// Only use this if you really know what you're doing!
+	ssize_t NumAllocated() const;	// Only use this if you really know what you're doing!
 
 	void Sort(int(__cdecl* pfnCompare)(const T*, const T*));
 
@@ -1377,7 +1377,7 @@ inline void CUtlVector<T, A>::Compact()
 }
 
 template< typename T, class A >
-inline int CUtlVector<T, A>::NumAllocated() const
+inline ssize_t CUtlVector<T, A>::NumAllocated() const
 {
 	return m_Memory.NumAllocated();
 }
