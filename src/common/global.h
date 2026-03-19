@@ -143,6 +143,14 @@ extern ConVar* net_datablock_networkLossForSlowSpeed;
 extern ConVar* net_compressDataBlock;
 extern ConVar* net_queued_packet_thread;
 extern ConVar* net_droppackets;
+extern ConVar* net_maxroutable;
+extern ConVar* net_minroutable;
+extern ConVar* net_maxfragments;
+extern ConVar* net_compresspackets;
+extern ConVar* net_compresspackets_minsize;
+
+extern ConVar* net_maxcleartime;
+extern ConVar* net_maxAccumulatedClearTimeBalance;
 
 extern ConVar* net_showmsg;
 extern ConVar* net_blockmsg;

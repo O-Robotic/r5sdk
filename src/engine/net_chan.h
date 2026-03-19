@@ -182,7 +182,7 @@ public:
 	bool HasPendingReliableData(void);
 
 	inline bool CanPacket(void) const { return CNetChan__CanPacket(this); }
-	inline int SendDatagram(bf_write* pDatagram) { return CNetChan__SendDatagram(this, pDatagram); }
+	int SendDatagram(bf_write* pDatagram);
 	bool SendNetMsg(INetMessage& msg, const bool bForceReliable, const bool bVoice);
 	bool SendData(bf_write& msg, const bool bReliable);
 
@@ -218,6 +218,7 @@ private:
 	static void _FlowNewPacket(CNetChan* const pChan, const int flow, const int outSeqNr, 
 		const int inSeqNr, const int nChoked, const int nDropped, const int nSize);
 	static void _FlowUpdate(CNetChan* pChan, int flow, int addBytes);
+	static int _SendDatagram(CNetChan* thisp, bf_write* pDatagram);
 	static bool _SendSubChannelData(CNetChan* thisp, bf_write* pBuff);
 	static bool _ReadSubChannelData(CNetChan* thisp, bf_read* pBuff);
 	static void _CreateFragmentsFromBuffer(CNetChan* thisp, bf_write* pBuff);
@@ -275,7 +276,7 @@ private:
 	uint8_t             m_nServerCPU;
 	int                 m_nMaxRoutablePayloadSize;
 	int                 m_nSplitPacketSequence;
-	int64_t             m_StreamSendBuffer;
+	uint8_t*            m_StreamSendBuffer;
 	bf_write            m_StreamSend;
 	bool                m_bConnecting; // true if SetSignonState() is called with signon < SIGNONSTATE_FULL.
 	netflow_t           m_DataFlow[MAX_FLOWS];

@@ -156,6 +156,13 @@ ConVar* net_datablock_networkLossForSlowSpeed = nullptr;
 ConVar* net_compressDataBlock              = nullptr;
 ConVar* net_queued_packet_thread           = nullptr;
 ConVar* net_droppackets                    = nullptr;
+ConVar* net_maxroutable					   = nullptr;
+ConVar* net_minroutable					   = nullptr;
+ConVar* net_maxfragments				   = nullptr;
+ConVar* net_compresspackets				   = nullptr;
+ConVar* net_compresspackets_minsize		   = nullptr;
+ConVar* net_maxAccumulatedClearTimeBalance = nullptr;
+ConVar* net_maxcleartime				   = nullptr;
 
 ConVar* net_showmsg                        = nullptr;
 ConVar* net_blockmsg                       = nullptr;
@@ -259,6 +266,12 @@ void ConVar_InitShipped(void)
 	net_datablock_networkLossForSlowSpeed = g_pCVar->FindVar("net_datablock_networkLossForSlowSpeed");
     net_queued_packet_thread         = g_pCVar->FindVar("net_queued_packet_thread");
     net_droppackets                  = g_pCVar->FindVar("net_droppackets");
+	net_maxroutable					 = g_pCVar->FindVar("net_maxroutable");
+	net_minroutable					 = g_pCVar->FindVar("net_minroutable");
+	net_maxfragments				 = g_pCVar->FindVar("net_maxfragments");
+
+	net_maxcleartime				 = g_pCVar->FindVar("net_maxcleartime");
+	net_maxAccumulatedClearTimeBalance = g_pCVar->FindVar("net_maxAccumulatedClearTimeBalance");
 
 	net_usesocketsforloopback        = g_pCVar->FindVar("net_usesocketsforloopback");
 
@@ -362,11 +375,11 @@ void ConVar_InitShipped(void)
 	language_cvar->InstallChangeCallback(LanguageChanged_f, nullptr, false);
 #endif // !DEDICATED
 
-	ConVar* const net_compresspackets = g_pCVar->FindVar("net_compresspackets");
+	net_compresspackets = g_pCVar->FindVar("net_compresspackets");
 	net_compresspackets->RemoveFlags(FCVAR_DEVELOPMENTONLY);
 	net_compresspackets->AddFlags(FCVAR_RELEASE);
 
-	ConVar* const net_compresspackets_minsize = g_pCVar->FindVar("net_compresspackets_minsize");
+	net_compresspackets_minsize = g_pCVar->FindVar("net_compresspackets_minsize");
 	net_compresspackets_minsize->RemoveFlags(FCVAR_DEVELOPMENTONLY);
 	net_compresspackets_minsize->AddFlags(FCVAR_RELEASE);
 }

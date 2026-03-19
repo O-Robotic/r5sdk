@@ -1186,6 +1186,173 @@ bool CNetChan::RegisterMessage(INetMessage* msg)
     return true;
 }
 
+int CNetChan::SendDatagram(bf_write* pDatagram)
+{
+    return _SendDatagram(this, pDatagram);
+}
+
+int CNetChan::_SendDatagram(CNetChan* thisp, bf_write* pDatagram)
+{
+    AcquireSRWLockExclusive(&thisp->m_Lock);
+    if (thisp->m_Socket == NS_CLIENT)
+    {
+        const int nNewMaxRoutable = net_maxroutable->GetInt();
+        if (nNewMaxRoutable != thisp->GetMaxRoutablePayloadSize())
+            thisp->m_nMaxRoutablePayloadSize = nNewMaxRoutable;
+    }
+    
+    if (thisp->remote_address.GetType() == netadrtype_t::NA_NULL)
+    {
+        thisp->m_fClearTime = 0.0;
+        thisp->m_nChokedPackets = 0;
+        thisp->m_nRealTimePackets = 0;
+        thisp->m_StreamReliable.Reset();
+        thisp->m_StreamUnreliable.Reset();
+        const int nOldOutSeqNr = thisp->m_nOutSequenceNr++;
+        ReleaseSRWLockExclusive(&thisp->m_Lock);
+        return nOldOutSeqNr;
+    }
+
+    if (thisp->m_StreamReliable.IsOverflowed())
+    {
+        Error(eDLL_T::ENGINE, EXIT_FAILURE, "%s:send reliable stream overflow %d\n", thisp->remote_address.ToString(), thisp->m_StreamReliable.GetNumBytesWritten());
+        ReleaseSRWLockExclusive(&thisp->m_Lock);
+        return 0;
+    }
+
+    if (thisp->m_StreamReliable.GetNumBitsWritten() > 0)
+    {
+        thisp->CreateFragmentsFromBuffer(&thisp->m_StreamReliable);
+        thisp->m_StreamReliable.Reset();
+    }
+
+    if (thisp->m_StreamSendBuffer == nullptr)
+    {
+        thisp->m_StreamSendBuffer = new uint8_t[NET_MAX_MESSAGE];
+    }
+
+    thisp->m_StreamSend = bf_write(thisp->m_StreamSendBuffer, NET_MAX_MESSAGE);
+
+    thisp->m_StreamSend.WriteLong(thisp->m_nOutSequenceNr);
+    thisp->m_StreamSend.WriteLong(thisp->m_nInSequenceNr);
+
+    bf_write flagPos = thisp->m_StreamSend;
+
+    thisp->m_StreamSend.WriteUBitLong(0, 8);
+    
+    uint8_t packetFlag = 0;
+
+    if (thisp->m_nChokedPackets > 0)
+    {
+        packetFlag |= PACKET_FLAG_CHOKED;
+        thisp->m_StreamSend.WriteUBitLong(thisp->m_nChokedPackets, 8);
+    }
+
+    if (thisp->m_nRealTimePackets > 0)
+        packetFlag |= PACKET_FLAG_PRESCALED;
+
+    if (pDatagram)
+    {
+        int someSize = 8192;
+        if (thisp->remote_address.IsLoopback())
+            someSize = 16384;
+
+        if (pDatagram->GetNumBytesWritten() >= someSize)
+            packetFlag |= PACKET_FLAG_LOOPBACK;
+    }
+
+    if (thisp->m_bInReliableState || thisp->m_bPendingRemoteNonceAck)
+    {
+        thisp->m_StreamSend.WriteOneBit(true);
+        thisp->m_StreamSend.WriteUBitLong(0xFDBAC34D, 32);
+        if (thisp->m_bPendingRemoteNonceAck)
+        {
+            thisp->m_StreamSend.WriteOneBit(true);
+            thisp->m_StreamSend.WriteUBitLong(thisp->m_nNonceRemote, 32);
+        }
+        else
+        {
+            thisp->m_StreamSend.WriteOneBit(false);
+        }
+
+        thisp->m_StreamSend.WriteUBitLong(thisp->m_nSubInFragments, 32);
+        thisp->m_StreamSend.WriteUBitLong(thisp->m_nSubInFragments & 1023, 10);
+        thisp->m_bInReliableState = false;
+    }
+    else
+    {
+        thisp->m_StreamSend.WriteOneBit(false);
+    }
+
+    if (thisp->SendSubChannelData(&thisp->m_StreamSend))
+        packetFlag |= PACKET_FLAG_RELIABLE;
+
+    if (pDatagram && pDatagram->GetNumBitsWritten() < thisp->m_StreamSend.GetNumBitsLeft())
+        thisp->m_StreamSend.WriteBits(pDatagram->GetData(), pDatagram->GetNumBitsWritten());
+
+    if (thisp->m_StreamUnreliable.GetNumBitsWritten() < thisp->m_StreamSend.GetNumBitsLeft())
+    {
+        thisp->m_StreamSend.WriteBits(thisp->m_StreamUnreliable.GetData(), thisp->m_StreamUnreliable.GetNumBitsWritten());
+    }
+
+    thisp->m_StreamUnreliable.Reset();
+
+    if (thisp->m_StreamVoice.GetNumBitsWritten() < thisp->m_StreamSend.GetNumBitsLeft())
+    {
+        thisp->m_StreamSend.WriteBits(thisp->m_StreamVoice.GetData(), thisp->m_StreamVoice.GetNumBitsWritten());
+        thisp->m_StreamVoice.Reset();
+    }
+
+    const int nMinRoutable = thisp->m_Socket == NS_SERVER ? net_minroutable->GetInt() : 16;
+
+    while (thisp->m_StreamSend.GetNumBytesWritten() < nMinRoutable)
+    {
+        thisp->m_StreamSend.WriteUBitLong(net_NOP, NETMSG_TYPE_BITS);
+    }
+
+    if (thisp->m_StreamSend.GetNumBitsWritten() % 8 == 1)
+    {
+        thisp->m_StreamSend.WriteUBitLong(net_NOP, NETMSG_TYPE_BITS);
+    }
+
+    if (thisp->m_StreamSend.GetNumBitsWritten() % 8 && (8 - thisp->m_StreamSend.GetNumBitsWritten() % 8) > 0)
+    {
+        thisp->m_StreamSend.WriteUBitLong(0, 8 - (thisp->m_StreamSend.GetNumBitsWritten() % 8));
+    }
+
+    flagPos.WriteByte(packetFlag);
+
+    const bool bShouldCompressPacket = net_compresspackets->GetBool() 
+        && thisp->m_StreamSend.GetNumBytesWritten() >= net_compresspackets_minsize->GetInt() ? true : false;
+
+    int nTotalSize = NET_SendPacket(thisp, thisp->m_Socket, thisp->remote_address, thisp->m_StreamSend.GetData(), thisp->m_StreamSend.GetNumBytesWritten(), nullptr, bShouldCompressPacket, nullptr, 1);
+    nTotalSize += 28;
+    
+    thisp->FlowNewPacket(FLOW_OUTGOING, thisp->m_nOutSequenceNr, thisp->m_nInSequenceNr, thisp->m_nChokedPackets, 0, nTotalSize);
+    thisp->FlowUpdate(FLOW_OUTGOING, nTotalSize);
+
+    const double netTime = *g_pNetTime;
+    
+    if (netTime - net_maxAccumulatedClearTimeBalance->GetFloat() > thisp->m_fClearTime)
+{
+        thisp->m_fClearTime = netTime - net_maxAccumulatedClearTimeBalance->GetFloat();
+    }
+    
+    const double flAddTime = (float)nTotalSize / (float)thisp->m_Rate;
+    thisp->m_fClearTime += flAddTime;
+
+    if (net_maxcleartime->GetFloat() > 0.0f)
+    {
+        thisp->m_fClearTime = MIN((double)net_maxcleartime->GetFloat() + netTime, thisp->m_fClearTime);
+    }
+
+    thisp->m_nChokedPackets = 0;
+    thisp->m_nRealTimePackets = 0;
+    const int nOldOutSeqNr = thisp->m_nOutSequenceNr++;
+    ReleaseSRWLockExclusive(&thisp->m_Lock);
+    return nOldOutSeqNr;
+}
+
 //-----------------------------------------------------------------------------
 // Purpose: free's the receive data fragment list
 //-----------------------------------------------------------------------------
@@ -1227,5 +1394,6 @@ void VNetChan::Detour(const bool bAttach) const
     DetourSetup(&CNetChan__ReadSubChannelData, &CNetChan::_ReadSubChannelData, bAttach);
     DetourSetup(&CNetChan__RegisterMessage, &CNetChan::_RegisterMessage, bAttach);
     DetourSetup(&CNetChan__FindMessage, &CNetChan::_FindMessage, bAttach);
+    DetourSetup(&CNetChan__SendDatagram, &CNetChan::_SendDatagram, bAttach);
     DetourSetup(&CNetChan__FlowUpdate, &CNetChan::_FlowUpdate, bAttach);
 }
