@@ -50,6 +50,15 @@ typedef struct netframe_s
 	float avg_latency;
 } netframe_t;
 
+struct netframe_headers_t
+{
+	float m_frameTimes[NET_FRAMES_BACKUP];
+	float m_frameLatencies[NET_FRAMES_BACKUP];
+	int m_frameSizes[NET_FRAMES_BACKUP];
+	short m_frameChoked[NET_FRAMES_BACKUP];
+	bool m_frameValid[NET_FRAMES_BACKUP];
+};
+
 //-----------------------------------------------------------------------------
 typedef struct netflow_s
 {
@@ -65,7 +74,11 @@ typedef struct netflow_s
 	int64_t totalbytes;
 	int64_t totalupdates;
 	int currentindex;
-	netframe_header_t frame_headers[NET_FRAMES_BACKUP];
+
+	netframe_headers_t frame_headers;
+	//By moving from an array of struts to a struct of arrays we shed 128 bytes of alignment bytes
+	char m_padding[128];
+	
 	netframe_t frames[NET_FRAMES_BACKUP];
 	netframe_t* currentframe;
 } netflow_t;
@@ -101,6 +114,7 @@ inline bool(*CNetChan__CanPacket)(const CNetChan* pChan);
 inline void(*CNetChan__FlowNewPacket)(CNetChan* pChan, int flow, int outSeqNr, int inSeqNr, int nChoked, int nDropped, int nSize);
 inline int(*CNetChan__SendDatagram)(CNetChan* pChan, bf_write* pMsg);
 inline bool(*CNetChan__ProcessMessages)(CNetChan* pChan, bf_read* pMsg);
+inline void(*CNetChan__FlowUpdate)(CNetChan* pChan, int flow, int addBytes);
 
 inline void(*CNetChan__CreateFragmentsFromBuffer)(CNetChan* pChan, bf_write* pBuff);
 inline bool(*CNetChan__SendSubChannelData)(CNetChan* pChan, bf_write* pBuff);
@@ -173,12 +187,17 @@ public:
 	static void _Shutdown(CNetChan* pChan, const char* szReason, uint8_t bBadRep, bool bRemoveNow);
 	static bool _ProcessMessages(CNetChan* pChan, bf_read* pMsg);
 
-	static void _FlowNewPacket(CNetChan* const pChan, const int flow, const int outSeqNr, const int inSeqNr, const int nChoked, const int nDropped, const int nSize);
+	void FlowNewPacket(const int flow, const int outSeqNr, const int inSeqNr, const int nChoked, const int nDropped, const int nSize);
+	void FlowUpdate(int flow, int addBytes);
 
 	void SetChoked();
 	void SetRemoteFramerate(float flFrameTime, float flFrameTimeStdDeviation);
 	inline void SetRemoteCPUStatistics(uint8_t nStats) { m_nServerCPU = nStats; }
+	netflow_t* GetFlow(int flow) { return &m_DataFlow[flow]; }
 private:
+	static void _FlowNewPacket(CNetChan* const pChan, const int flow, const int outSeqNr, 
+		const int inSeqNr, const int nChoked, const int nDropped, const int nSize);
+	static void _FlowUpdate(CNetChan* pChan, int flow, int addBytes);
 	static bool _SendSubChannelData(CNetChan* thisp, bf_write* pBuff);
 	static bool _ReadSubChannelData(CNetChan* thisp, bf_read* pBuff);
 	static void _CreateFragmentsFromBuffer(CNetChan* thisp, bf_write* pBuff);
@@ -285,6 +304,7 @@ class VNetChan : public IDetour
         LogFunAdr("CNetChan::CreateFragmentsFromBuffer", CNetChan__CreateFragmentsFromBuffer);
         LogFunAdr("CNetChan::SendCubChannelData", CNetChan__SendSubChannelData);
         LogFunAdr("CNetChan::ReadSubChannelData", CNetChan__ReadSubChannelData);
+        LogFunAdr("CNetChan::FlowUpdate", CNetChan__FlowUpdate);
 	}
 	virtual void GetFun(void) const
 	{
@@ -297,6 +317,7 @@ class VNetChan : public IDetour
         Module_FindPattern(g_GameDll, "41 55 48 81 EC ?? ?? ?? ?? 48 89 5C 24").GetPtr(CNetChan__CreateFragmentsFromBuffer);
         Module_FindPattern(g_GameDll, "40 53 55 48 83 EC ? 80 79").GetPtr(CNetChan__SendSubChannelData);
         Module_FindPattern(g_GameDll, "48 89 5C 24 ?? 48 89 6C 24 ?? 48 89 74 24 ?? 57 41 54 41 55 41 56 41 57 48 81 EC ?? ?? ?? ?? C6 81").GetPtr(CNetChan__ReadSubChannelData);
+        Module_FindPattern(g_GameDll, "48 83 EC ?? F2 0F 10 0D ?? ?? ?? ?? 4C 8D 89").GetPtr(CNetChan__FlowUpdate);
 	}
 	virtual void GetVar(void) const { }
 	virtual void GetCon(void) const { }

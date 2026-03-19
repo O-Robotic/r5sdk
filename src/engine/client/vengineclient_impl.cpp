@@ -92,7 +92,31 @@ void CEngineClient::_ClientCmd(CEngineClient* thisptr, const char* const szCmdSt
 	}
 }
 
+bool CEngineClient::_IsValidPacket(CEngineClient* thisptr, int flow, uint8_t nFrameNumber)
+{
+	return g_pClientState->m_NetChannel && g_pClientState->m_NetChannel->GetFlow(flow)->frame_headers.m_frameValid[nFrameNumber & NET_FRAMES_MASK];
+}
+
+float CEngineClient::_GetPacketTime(CEngineClient* thisptr, int flow, uint8_t nFrameNumber)
+{
+	if (!g_pClientState->m_NetChannel)
+		return 0.0;
+
+	return g_pClientState->m_NetChannel->GetFlow(flow)->frame_headers.m_frameTimes[nFrameNumber & NET_FRAMES_MASK];
+}
+
+int CEngineClient::_GetPacketSize(CEngineClient* thisptr, int flow, uint8_t nFrameNumber)
+{
+	if (!g_pClientState->m_NetChannel)
+		return 0;
+
+	return g_pClientState->m_NetChannel->GetFlow(flow)->frame_headers.m_frameSizes[nFrameNumber & NET_FRAMES_MASK];
+}
+
 void HVEngineClient::Detour(const bool bAttach) const
 {
 	DetourSetup(&CEngineClient__ClientCmd, &CEngineClient::_ClientCmd, bAttach);
+	DetourSetup(&CEngineClient__IsValidPacket, &CEngineClient::_IsValidPacket, bAttach);
+	DetourSetup(&CEngineClient__GetPacketTime, &CEngineClient::_GetPacketTime, bAttach);
+	DetourSetup(&CEngineClient__GetPacketSize, &CEngineClient::_GetPacketSize, bAttach);
 }

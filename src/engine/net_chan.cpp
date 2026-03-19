@@ -115,8 +115,6 @@ int CNetChan::GetNumBitsLeft(const bool bReliable)
 void CNetChan::_FlowNewPacket(CNetChan* const pChan, const int flow, const int outSeqNr, const int inSeqNr, const int nChoked, const int nDropped, const int nSize)
 {
     netflow_t* const pflow = &pChan->m_DataFlow[flow];
-
-    netframe_header_t* frameheader = nullptr;
     netframe_t* frame = nullptr;
 
     const int currentindex = pflow->currentindex;
@@ -132,25 +130,26 @@ void CNetChan::_FlowNewPacket(CNetChan* const pChan, const int flow, const int o
         // statistics as they have then been invalidated.
         if (outSeqNr - currentindex > NET_FRAMES_BACKUP)
         {
-            memset(pflow->frame_headers, 0, sizeof(pflow->frame_headers));
-            netframe_header_t* const frameHeader = &pflow->frame_headers[outSeqNr & NET_FRAMES_MASK];
+            memset(&pflow->frame_headers, 0, sizeof(pflow->frame_headers));
 
-            frameHeader->time = netTime;
-            frameHeader->latency = -1.0f;
+            const size_t nFrameIndx = outSeqNr & NET_FRAMES_MASK;
+            pflow->frame_headers.m_frameValid[nFrameIndx] = false;
+            pflow->frame_headers.m_frameTimes[nFrameIndx] = netTime;
+            pflow->frame_headers.m_frameLatencies[nFrameIndx] = -1.0f;
         }
         else
         {
+            int frameIndex = 0;
+
             for (int i = currentindex + 1; (i <= outSeqNr); ++i)
             {
-                const int frameIndex = i & NET_FRAMES_MASK;
+                frameIndex = i & NET_FRAMES_MASK;
 
-                frameheader = &pflow->frame_headers[frameIndex];
-
-                frameheader->time = netTime; // Now.
-                frameheader->size = 0;
-                frameheader->choked = 0; // Not acknowledged yet.
-                frameheader->valid = false;
-                frameheader->latency = -1.0f; // Not acknowledged yet.
+                pflow->frame_headers.m_frameTimes[frameIndex] = netTime; // Now.
+                pflow->frame_headers.m_frameSizes[frameIndex] = 0;
+                pflow->frame_headers.m_frameChoked[frameIndex] = 0; // Not acknowledged yet.
+                pflow->frame_headers.m_frameValid[frameIndex] = false;
+                pflow->frame_headers.m_frameLatencies[frameIndex] = -1.0f; // Not acknowledged yet.
 
                 frame = &pflow->frames[frameIndex];
 
@@ -163,7 +162,7 @@ void CNetChan::_FlowNewPacket(CNetChan* const pChan, const int flow, const int o
                 {
                     if (backTrack < nChoked)
                     {
-                        frameheader->choked = 1;
+                        pflow->frame_headers.m_frameChoked[frameIndex] = 1;
                     }
                     else
                     {
@@ -172,9 +171,9 @@ void CNetChan::_FlowNewPacket(CNetChan* const pChan, const int flow, const int o
                 }
             }
 
-            frameheader->size = nSize;
-            frameheader->choked = (short)nChoked;
-            frameheader->valid = true;
+            pflow->frame_headers.m_frameSizes[frameIndex] = nSize;
+            pflow->frame_headers.m_frameChoked[frameIndex] = (short)nChoked;
+            pflow->frame_headers.m_frameValid[frameIndex] = true;
             frame->dropped = nDropped;
             frame->avg_latency = pChan->GetAvgLatency(FLOW_OUTGOING);
         }
@@ -190,12 +189,12 @@ void CNetChan::_FlowNewPacket(CNetChan* const pChan, const int flow, const int o
 
     if (inSeqNr > (aflow->currentindex - NET_FRAMES_BACKUP))
     {
-        netframe_header_t* const aframe = &aflow->frame_headers[inSeqNr & NET_FRAMES_MASK];
+        const int aFrameIdx = inSeqNr & NET_FRAMES_MASK;
 
-        if (aframe->valid && aframe->latency == -1.0f)
+        if (aflow->frame_headers.m_frameValid[aFrameIdx] && aflow->frame_headers.m_frameLatencies[aFrameIdx] == -1.0f)
         {
-            const float latency = Max(0.0f, netTime - aframe->time);
-            aframe->latency = latency;
+            const float latency = Max(0.0f, netTime - aflow->frame_headers.m_frameTimes[aFrameIdx]);
+            aflow->frame_headers.m_frameLatencies[aFrameIdx] = latency;
 
             pflow->latency += latency;
             pflow->maxlatency = Max(pflow->maxlatency, latency);
@@ -205,21 +204,136 @@ void CNetChan::_FlowNewPacket(CNetChan* const pChan, const int flow, const int o
     }
     else // Acknowledged packet isn't in backup buffer anymore.
     {
-        netframe_header_t* const aframe = &aflow->frame_headers[aflow->currentindex & NET_FRAMES_MASK];
-        netframe_header_t* const nframe = &aflow->frame_headers[aflow->currentindex + 1 & NET_FRAMES_MASK];
+        const size_t aframeIdx = aflow->currentindex & NET_FRAMES_MASK;
+        const size_t nframeIdx = aflow->currentindex + 1 & NET_FRAMES_MASK;
 
         static const float DELTA_INTERP = 127.0f;
 
-        const float delta = (aframe->time - nframe->time) / DELTA_INTERP;
+        const float delta = (aflow->frame_headers.m_frameTimes[aframeIdx] - aflow->frame_headers.m_frameTimes[nframeIdx]) / DELTA_INTERP;
         const int backTrack = aflow->currentindex - inSeqNr;
 
-        const float latency = (delta * backTrack) + netTime - aframe->time;
+        const float latency = (delta * backTrack) + netTime - aflow->frame_headers.m_frameTimes[aframeIdx];
 
         pflow->latency += latency;
         pflow->maxlatency = Max(pflow->maxlatency, latency);
 
         pflow->totalupdates++;
     }
+}
+
+void CNetChan::_FlowUpdate(CNetChan* thisp, int flow, int addBytes)
+{
+    auto Collect256iToInt = [](const __m256i reg) {
+        const __m128i lowPart = _mm256_castsi256_si128(reg);
+        const __m128i hiPart = _mm256_extracti128_si256(reg, 1);
+        __m128i partialSum = _mm_add_epi32(lowPart, hiPart);
+        partialSum = _mm_add_epi32(partialSum, _mm_shuffle_epi32(partialSum, _MM_SHUFFLE(1, 0, 3, 2)));
+        partialSum = _mm_add_epi32(partialSum, _mm_shuffle_epi32(partialSum, _MM_SHUFFLE(2, 3, 0, 1)));
+        return _mm_cvtsi128_si32(partialSum);
+    };
+
+    const double netTime = *g_pNetTime;
+    netflow_t* const pFlow = &thisp->m_DataFlow[flow];
+    pFlow->totalbytes += addBytes;
+
+    if (pFlow->nextcompute > netTime)
+        return;
+
+    pFlow->nextcompute = (float)netTime + 0.25f;
+
+    int totalValid = 0;
+    int totalInvalid = 0;
+    int totalLatencyCount = 0;
+
+    __m256i zeroReg = _mm256_setzero_si256();
+    __m256i frameSizeSum = _mm256_setzero_si256();
+    __m256i chokedFrameSum = _mm256_setzero_si256();
+    __m256 startTimeMins = _mm256_set1_ps(FLT_MAX);
+    __m256 endTimeMaxs = _mm256_setzero_ps();
+    __m256 latenciesSum = _mm256_setzero_ps();
+
+    for (size_t i = 0; i < NET_FRAMES_BACKUP; i += 8)
+    {       
+        const __m128i isValids = _mm_loadl_epi64(reinterpret_cast<const __m128i*>(&pFlow->frame_headers.m_frameValid[i]));
+        const __m256i exapandedValids = _mm256_cvtepi8_epi32(isValids);
+
+        const __m256i validMask = _mm256_cmpgt_epi32(exapandedValids, zeroReg);
+        const int validFrames = _mm_popcnt_u32(_mm256_movemask_ps(_mm256_castsi256_ps(validMask)));
+        
+        totalInvalid += 8 - validFrames;
+        totalValid += validFrames;
+
+        {
+            const __m256i frameSizes = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(&pFlow->frame_headers.m_frameSizes[i]));
+            const __m256i maskedFrameSizes = _mm256_and_si256(frameSizes, validMask);
+            frameSizeSum = _mm256_add_epi32(frameSizeSum, maskedFrameSizes);
+        }
+
+        {
+            const __m128i chokedFrames = _mm_loadu_si128(reinterpret_cast<const __m128i*>(&pFlow->frame_headers.m_frameChoked[i]));
+            const __m256i lo = _mm256_cvtepi16_epi32(chokedFrames);
+            chokedFrameSum = _mm256_add_epi32(chokedFrameSum, _mm256_and_si256(lo, validMask));
+        }
+
+        {
+            const __m256 frameTimes = _mm256_loadu_ps(&pFlow->frame_headers.m_frameTimes[i]);
+            startTimeMins = _mm256_blendv_ps(startTimeMins, _mm256_min_ps(startTimeMins, frameTimes), _mm256_castsi256_ps(validMask));
+            endTimeMaxs = _mm256_blendv_ps(endTimeMaxs, _mm256_max_ps(endTimeMaxs, frameTimes), _mm256_castsi256_ps(validMask));
+        }
+
+        {
+            const __m256 latencies = _mm256_loadu_ps(&pFlow->frame_headers.m_frameLatencies[i]);
+            const __m256 mask = _mm256_and_ps(_mm256_cmp_ps(latencies, _mm256_set1_ps(-1.0f), _CMP_GT_OQ), _mm256_castsi256_ps(validMask));
+            latenciesSum =  _mm256_add_ps(latenciesSum, _mm256_and_ps(latencies, mask));
+            totalLatencyCount += _mm_popcnt_u32(_mm256_movemask_ps(mask));
+        }
+    }
+
+    const int totalBytes = Collect256iToInt(frameSizeSum);
+    const int totalChoked = Collect256iToInt(chokedFrameSum);
+    float startTime = FLT_MAX;
+    float endTime = 0.0f;
+    float totalLatency = 0.0f;
+
+    {
+        __m256 partialsum = _mm256_min_ps(startTimeMins, _mm256_permute2f128_ps(startTimeMins, startTimeMins, 0x01));
+        partialsum = _mm256_min_ps(partialsum, _mm256_shuffle_ps(partialsum, partialsum, _MM_SHUFFLE(1, 0, 3, 2)));
+        partialsum = _mm256_min_ps(partialsum, _mm256_shuffle_ps(partialsum, partialsum, _MM_SHUFFLE(2, 3, 0, 1)));
+        startTime = _mm_cvtss_f32(_mm256_castps256_ps128(partialsum));
+    }
+
+    {
+        __m256 partialsum = _mm256_max_ps(endTimeMaxs, _mm256_permute2f128_ps(endTimeMaxs, endTimeMaxs, 0x01));
+        partialsum = _mm256_max_ps(partialsum, _mm256_shuffle_ps(partialsum, partialsum, _MM_SHUFFLE(1, 0, 3, 2)));
+        partialsum = _mm256_max_ps(partialsum, _mm256_shuffle_ps(partialsum, partialsum, _MM_SHUFFLE(2, 3, 0, 1)));
+        endTime = _mm_cvtss_f32(_mm256_castps256_ps128(partialsum));
+    }
+
+    {
+        __m256 partialSum = _mm256_add_ps(latenciesSum, _mm256_permute2f128_ps(latenciesSum, latenciesSum, 0x01));
+        partialSum = _mm256_add_ps(partialSum, _mm256_permute_ps(partialSum, _MM_SHUFFLE(2, 3, 0, 1)));
+        partialSum = _mm256_add_ps(partialSum, _mm256_permute_ps(partialSum, _MM_SHUFFLE(1, 0, 3, 2)));
+        totalLatency = _mm_cvtss_f32(_mm256_castps256_ps128(partialSum));
+    }
+
+    const float totalTime = endTime - startTime;
+    if (totalTime > 0.0f)
+    {
+        pFlow->avgbytespersec = totalBytes / totalTime;
+        pFlow->avgpacketspersec = totalValid / totalTime;
+    }
+
+    const int totalPackets = totalInvalid + totalValid;
+
+    if (totalPackets > 0)
+    {
+        const float avgLoss = ((float)totalInvalid - (float)totalChoked) / totalPackets;
+        pFlow->avgloss = MAX(avgLoss, 0.0f);
+        pFlow->avgchoke = (float)totalChoked / totalPackets;
+    }
+
+    if (totalLatencyCount > 0)
+        pFlow->avglatency = totalLatency / totalLatencyCount;
 }
 
 //-----------------------------------------------------------------------------
@@ -902,6 +1016,11 @@ bool CNetChan::HasPendingReliableData(void)
 		|| (m_WaitingList.Count() > 0);
 }
 
+void CNetChan::FlowUpdate(int flow, int addBytes)
+{
+    CNetChan::_FlowUpdate(this, flow, addBytes);
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 void VNetChan::Detour(const bool bAttach) const
 {
@@ -911,4 +1030,5 @@ void VNetChan::Detour(const bool bAttach) const
     DetourSetup(&CNetChan__CreateFragmentsFromBuffer, &CNetChan::_CreateFragmentsFromBuffer, bAttach);
     DetourSetup(&CNetChan__SendSubChannelData, &CNetChan::_SendSubChannelData, bAttach);
     DetourSetup(&CNetChan__ReadSubChannelData, &CNetChan::_ReadSubChannelData, bAttach);
+    DetourSetup(&CNetChan__FlowUpdate, &CNetChan::_FlowUpdate, bAttach);
 }
