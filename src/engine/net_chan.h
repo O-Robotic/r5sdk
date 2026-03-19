@@ -108,6 +108,8 @@ enum EBufType
 	BUF_VOICE
 };
 
+inline void(*CNetChan__CNetChan)(CNetChan* pChan);
+inline void(*CNetChan__Setup)(CNetChan* pChan, int socket, netadr_t* pAdr, const char* pName, INetChannelHandler* pHandler);
 inline void(*CNetChan__Clear)(CNetChan* pChan, bool bStopProcessing);
 inline void(*CNetChan__Shutdown)(CNetChan* pChan, const char* szReason, uint8_t bBadRep, bool bRemoveNow);
 inline bool(*CNetChan__CanPacket)(const CNetChan* pChan);
@@ -116,20 +118,33 @@ inline int(*CNetChan__SendDatagram)(CNetChan* pChan, bf_write* pMsg);
 inline bool(*CNetChan__ProcessMessages)(CNetChan* pChan, bf_read* pMsg);
 inline void(*CNetChan__FlowUpdate)(CNetChan* pChan, int flow, int addBytes);
 
+inline bool (*CNetChan__RegisterMessage)(CNetChan* thisp, INetMessage* pNetMessage);
+inline INetMessage* (*CNetChan__FindMessage)(CNetChan* thisp, int type);
+
 inline void(*CNetChan__CreateFragmentsFromBuffer)(CNetChan* pChan, bf_write* pBuff);
 inline bool(*CNetChan__SendSubChannelData)(CNetChan* pChan, bf_write* pBuff);
 inline bool(*CNetChan__ReadSubChannelData)(CNetChan* pChan, bf_read* pBuff);
+
+inline int* g_pServerSocketInitialNonce;
+inline int* g_pClientSocketInitialNonce;
 
 //-----------------------------------------------------------------------------
 class CNetChan
 {
 	friend class VNetChan;
 public:
+	CNetChan();
+	static void _CNetChan(CNetChan* pNetChan) { new (pNetChan) CNetChan(); }
+
 	~CNetChan()
 	{
 		Shutdown("NetChannel removed.", 1, false);
 		FreeReceiveList();
+
+		if (m_pNetMessageTypes) delete m_pNetMessageTypes;
 	}
+
+	static void _Setup(CNetChan* pChan, int socket, netadr_t* pAdr, const char* pName, INetChannelHandler* pHandler);
 
 	inline const char* GetName(void)                     const { return m_Name; }
 	inline const char* GetAddress(bool onlyBase = false) const { return remote_address.ToString(onlyBase); }
@@ -175,7 +190,11 @@ public:
 	bool RegisterMessage(INetMessage* msg);
 
 	inline void Clear(bool bStopProcessing) { CNetChan__Clear(this, bStopProcessing); }
-	inline void Shutdown(const char* szReason, uint8_t bBadRep, bool bRemoveNow) { CNetChan__Shutdown(this, szReason, bBadRep, bRemoveNow); }
+	inline void Shutdown(const char* szReason, uint8_t bBadRep, bool bRemoveNow) { 
+		CNetChan__Shutdown(this, szReason, bBadRep, bRemoveNow);
+		if (m_pNetMessageTypes) 
+			m_pNetMessageTypes->RemoveAll();
+	}
 	void FreeReceiveList();
 	bool ProcessMessages(bf_read* pMsg);
 
@@ -193,6 +212,7 @@ public:
 	void SetChoked();
 	void SetRemoteFramerate(float flFrameTime, float flFrameTimeStdDeviation);
 	inline void SetRemoteCPUStatistics(uint8_t nStats) { m_nServerCPU = nStats; }
+	void SetMaxBufferSize(bool bReliable, int nBytes, bool bVoice);
 	netflow_t* GetFlow(int flow) { return &m_DataFlow[flow]; }
 private:
 	static void _FlowNewPacket(CNetChan* const pChan, const int flow, const int outSeqNr, 
@@ -201,6 +221,8 @@ private:
 	static bool _SendSubChannelData(CNetChan* thisp, bf_write* pBuff);
 	static bool _ReadSubChannelData(CNetChan* thisp, bf_read* pBuff);
 	static void _CreateFragmentsFromBuffer(CNetChan* thisp, bf_write* pBuff);
+	static INetMessage* _FindMessage(CNetChan* thisp, int type) { return thisp->FindMessage(type); }
+	static bool _RegisterMessage(CNetChan* thisp, INetMessage* msg) { return thisp->RegisterMessage(msg); }
 
 	//-----------------------------------------------------------------------------
 public:
@@ -246,7 +268,7 @@ private:
 	float               m_Timeout;
 	INetChannelHandler* m_MessageHandler;
 	CUtlVector<INetMessage*> m_NetMessages;
-	void*               m_UnusedInterfacePointer; // Previously: IDemoRecorder* m_DemoRecorder.
+	CUtlVector<NetMessageType>* m_pNetMessageTypes; // Previously: IDemoRecorder* m_DemoRecorder.
 	int                 m_nQueuedPackets;
 	float               m_flRemoteFrameTime;
 	float               m_flRemoteFrameTimeStdDeviation;
@@ -294,32 +316,48 @@ class VNetChan : public IDetour
 {
 	virtual void GetAdr(void) const
 	{
+		LogFunAdr("CNetChan::CNetChan", CNetChan__CNetChan);
+		LogFunAdr("CNetChan::Setup", CNetChan__Setup);
 		LogFunAdr("CNetChan::Clear", CNetChan__Clear);
 		LogFunAdr("CNetChan::Shutdown", CNetChan__Shutdown);
 		LogFunAdr("CNetChan::CanPacket", CNetChan__CanPacket);
 		LogFunAdr("CNetChan::FlowNewPacket", CNetChan__FlowNewPacket);
 		LogFunAdr("CNetChan::SendDatagram", CNetChan__SendDatagram);
 		LogFunAdr("CNetChan::ProcessMessages", CNetChan__ProcessMessages);
+		LogFunAdr("CNetChan::RegisterMessage", CNetChan__RegisterMessage);
+		LogFunAdr("CNetChan::FindMessage", CNetChan__FindMessage);
 
         LogFunAdr("CNetChan::CreateFragmentsFromBuffer", CNetChan__CreateFragmentsFromBuffer);
         LogFunAdr("CNetChan::SendCubChannelData", CNetChan__SendSubChannelData);
         LogFunAdr("CNetChan::ReadSubChannelData", CNetChan__ReadSubChannelData);
         LogFunAdr("CNetChan::FlowUpdate", CNetChan__FlowUpdate);
+
+		LogVarAdr("g_ServerSocketInitialNonce", g_pServerSocketInitialNonce);
+		LogVarAdr("g_ClientSocketInitialNonce", g_pClientSocketInitialNonce);
 	}
 	virtual void GetFun(void) const
 	{
+		Module_FindPattern(g_GameDll, "48 89 5C 24 ?? 57 48 83 EC ?? C7 41").GetPtr(CNetChan__CNetChan);
+		Module_FindPattern(g_GameDll, "4C 8B DC 57 48 83 EC ?? 33 C0").GetPtr(CNetChan__Setup);
 		Module_FindPattern(g_GameDll, "88 54 24 10 53 55 57").GetPtr(CNetChan__Clear);
 		Module_FindPattern(g_GameDll, "48 89 6C 24 18 56 57 41 56 48 83 EC 30 83 B9").GetPtr(CNetChan__Shutdown);
 		Module_FindPattern(g_GameDll, "40 53 48 83 EC 20 83 B9 ?? ?? ?? ?? ?? 48 8B D9 75 15 48 8B 05 ?? ?? ?? ??").GetPtr(CNetChan__CanPacket);
 		Module_FindPattern(g_GameDll, "44 89 4C 24 ?? 44 89 44 24 ?? 89 54 24 10 56").GetPtr(CNetChan__FlowNewPacket);
 		Module_FindPattern(g_GameDll, "48 89 5C 24 ?? 55 56 57 41 56 41 57 48 83 EC 70").GetPtr(CNetChan__SendDatagram);
 		Module_FindPattern(g_GameDll, "48 89 5C 24 ?? 48 89 6C 24 ?? 57 48 81 EC ?? ?? ?? ?? 48 8B FA").GetPtr(CNetChan__ProcessMessages);
+		Module_FindPattern(g_GameDll, "48 89 5C 24 ?? 57 48 83 EC ?? 48 8B 02 48 8B D9 48 8B CA 48 8B FA FF 50 ?? 8B D0").GetPtr(CNetChan__RegisterMessage);
+		Module_FindPattern(g_GameDll, "48 89 5C 24 ?? 48 89 6C 24 ?? 48 89 74 24 ?? 48 89 7C 24 ?? 41 56 48 83 EC ?? 48 63 B1").GetPtr(CNetChan__FindMessage);
+
         Module_FindPattern(g_GameDll, "41 55 48 81 EC ?? ?? ?? ?? 48 89 5C 24").GetPtr(CNetChan__CreateFragmentsFromBuffer);
         Module_FindPattern(g_GameDll, "40 53 55 48 83 EC ? 80 79").GetPtr(CNetChan__SendSubChannelData);
         Module_FindPattern(g_GameDll, "48 89 5C 24 ?? 48 89 6C 24 ?? 48 89 74 24 ?? 57 41 54 41 55 41 56 41 57 48 81 EC ?? ?? ?? ?? C6 81").GetPtr(CNetChan__ReadSubChannelData);
         Module_FindPattern(g_GameDll, "48 83 EC ?? F2 0F 10 0D ?? ?? ?? ?? 4C 8D 89").GetPtr(CNetChan__FlowUpdate);
 	}
-	virtual void GetVar(void) const { }
+	virtual void GetVar(void) const 
+	{
+		CMemory(CNetChan__Setup).OffsetSelf(0x368).FindPatternSelf("8B 05 23 D6 48 26").ResolveRelativeAddressSelf(0x2, 0x6).GetPtr(g_pServerSocketInitialNonce);
+		CMemory(CNetChan__Setup).OffsetSelf(0x368).FindPatternSelf("8B 05 B5 C9 08 26").ResolveRelativeAddressSelf(0x2, 0x6).GetPtr(g_pClientSocketInitialNonce);
+	}
 	virtual void GetCon(void) const { }
 	virtual void Detour(const bool bAttach) const;
 };

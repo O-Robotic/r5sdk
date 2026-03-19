@@ -69,7 +69,7 @@ ConVar* language_cvar                      = nullptr;
 ConVar* voice_noxplat                      = nullptr;
 
 ConVar* platform_user_id                   = nullptr;
-
+ConVar* timeout_during_load				   = nullptr;
 #ifndef DEDICATED
 ConVar* name_cvar                          = nullptr;
 #endif // !DEDICATED
@@ -194,6 +194,7 @@ void ConVar_InitShipped(void)
 	language_cvar                    = g_pCVar->FindVar("language");
 	voice_noxplat                    = g_pCVar->FindVar("voice_noxplat");
 	platform_user_id                 = g_pCVar->FindVar("platform_user_id");
+	timeout_during_load				 = g_pCVar->FindVar("timeout_during_load");
 #ifndef DEDICATED
 	name_cvar                        = g_pCVar->FindVar("name");
 	cl_updaterate_mp                 = g_pCVar->FindVar("cl_updaterate_mp");

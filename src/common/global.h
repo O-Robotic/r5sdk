@@ -57,6 +57,7 @@ extern ConVar* voice_noxplat;
 
 extern ConVar* platform_user_id;
 
+extern ConVar* timeout_during_load;
 #ifndef DEDICATED
 extern ConVar* name_cvar;
 #endif // !DEDICATED

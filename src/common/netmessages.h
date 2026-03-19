@@ -101,7 +101,7 @@ enum NetMessageVtbl
 //-------------------------------------------------------------------------
 // Enumeration of netmessage types
 //-------------------------------------------------------------------------
-enum NetMessageType
+enum NetMessageType : uint32_t
 {
 	net_StringCmd                   = 3,
 	net_SetConVar                   = 4,

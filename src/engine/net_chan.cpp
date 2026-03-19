@@ -11,6 +11,7 @@
 #include "common/callback.h"
 #include "engine/net.h"
 #include "engine/net_chan.h"
+#include <tier0/commandline.h>
 #ifndef CLIENT_DLL
 #include "engine/server/server.h"
 #include "engine/client/client.h"
@@ -24,6 +25,152 @@ static ConVar net_processTimeBudget("net_processTimeBudget", "200", FCVAR_RELEAS
 
 extern ConVar net_compression_method;
 extern ConVar net_compression_debug;
+
+static float GetDefaultTimeout()
+{
+    static bool s_bTimeoutChecked = false;
+    static bool s_bNoTimeout = false;
+    if (!s_bTimeoutChecked)
+    {
+        s_bTimeoutChecked = true;
+        s_bNoTimeout = CommandLine()->FindParm("-notimeout") != 0;
+    }
+    
+    if (s_bNoTimeout)
+        return 999999.0;
+    return timeout_during_load->GetFloat();
+}
+
+CNetChan::CNetChan()
+{
+    m_bProcessingMessages = false;
+    m_bPendingRemoteNonceAck = false;
+    m_bShouldDelete = false;
+    m_bStopProcessing = false;
+    m_bShuttingDown = false;
+    m_nOutSequenceNr = 1;
+    m_nInSequenceNr = 0;
+    m_nOutSequenceNrAck = 0;
+    m_nChokedPackets = 0;
+    m_nRealTimePackets = 0;
+    m_nLastRecvFlags = 0;
+
+    InitializeSRWLock(&m_Lock);
+
+    m_StreamUnreliable.SetDebugName("netchan_t::unreliabledata");
+    m_StreamReliable.SetDebugName("netchan_t::reliabledata");
+    m_StreamVoice.SetDebugName("netchan_t::voicedata");
+    m_StreamSend.SetDebugName("netchan_t::send");
+
+    m_Socket = -1;
+    m_MaxReliablePayloadSize = 262144; //NET_MAX_PAYLOAD
+    last_received = 0.0;
+    connect_time = 0.0;
+    m_Rate = 256000;
+    padding_maybe = 0;
+    m_fClearTime = 0.0;
+
+    m_ReceiveList = {};
+    m_ReceiveList.transferID = -1;
+
+    m_nSubOutFragmentsAck = 0;
+    m_nSubInFragments = 0;
+    m_nNonceHost = 0;
+    m_nNonceRemote = 0;
+    m_bReceivedRemoteNonce = false;
+    m_bInReliableState = false;
+    m_bPendingRemoteNonceAck = false;
+    m_nSubOutSequenceNr = 0;
+    m_nLastRecvNonce = 0;
+    m_bUseCompression = false;
+    m_ChallengeNr = 0;
+    m_Timeout = GetDefaultTimeout();
+    m_MessageHandler = nullptr;
+
+    //This will now be used to hold net messages types in a contiguous buffer for faster lookups
+    m_pNetMessageTypes = new CUtlVector<NetMessageType>;
+
+    m_nQueuedPackets = 0;
+    m_flRemoteFrameTime = 0.0;
+    m_flRemoteFrameTimeStdDeviation = 0.0;
+    m_nServerCPU = 0;
+    m_nMaxRoutablePayloadSize = 1200;
+    m_nSplitPacketSequence = 1;
+    m_StreamSendBuffer = nullptr;
+    m_bConnecting = false;
+
+    memset(m_DataFlow, 0, sizeof(m_DataFlow));
+
+    m_nLifetimePacketsDropped = 0;
+    m_nSessionPacketsDropped = 0;
+    m_nSequencesSkipped = 0;
+    m_nSessionRecvs = 0;
+    m_nLiftimeRecvs = 0;
+    m_bRetrySendLong = false;
+    m_Name[0] = '\0';
+}
+
+void CNetChan::_Setup(CNetChan* pChan, int socket, netadr_t* pAdr, const char* pName, INetChannelHandler* pHandler)
+{
+    pChan->m_Socket = socket;
+    pChan->m_bRetrySendLong = false;
+    pChan->remote_address = *pAdr;
+    pChan->last_received = *g_pNetTime;
+
+    V_strncpy(pChan->m_Name, pName, sizeof(pChan->m_Name));
+    pChan->m_Name[31] = '\0';
+    pChan->m_MessageHandler = pHandler;
+
+    pChan->m_UnreliableDataBuffer.Purge();
+    pChan->m_UnreliableDataBuffer.EnsureCapacity(8000);
+    pChan->m_StreamUnreliable = bf_write(pChan->m_UnreliableDataBuffer.Base(), 8000);
+
+    pChan->m_VoiceDataBuffer.Purge();
+    pChan->m_VoiceDataBuffer.EnsureCapacity(8000);
+    pChan->m_StreamVoice = bf_write(pChan->m_VoiceDataBuffer.Base(), 8000);
+
+    pChan->SetMaxBufferSize(false, 8000, false);
+    pChan->SetMaxBufferSize(false, 8000, true);
+    pChan->SetMaxBufferSize(true, NET_MAX_PAYLOAD, false);
+
+    if (pChan->m_pNetMessageTypes)
+    {
+        pChan->m_pNetMessageTypes->RemoveAll();
+    }
+    else
+    {
+        pChan->m_pNetMessageTypes = new CUtlVector<NetMessageType>;
+    }
+
+    pChan->m_Rate = 256000;
+    pChan->m_Timeout = GetDefaultTimeout();
+    pChan->m_nOutSequenceNr = 1;
+    pChan->m_nInSequenceNr = 0;
+    pChan->m_nOutSequenceNrAck = 0;
+    pChan->m_nChokedPackets = 0;
+    pChan->m_nRealTimePackets = 0;
+    pChan->m_nLastRecvFlags = 0;
+    pChan->m_fClearTime = 0.0;
+    pChan->m_ChallengeNr = 0;
+    pChan->FreeReceiveList();
+    pChan->m_ReceiveList.transferID = -1;
+    pChan->m_MaxReliablePayloadSize = net_maxfragments->GetInt();
+
+    if (socket == NS_SERVER)
+    {
+        pChan->m_nNonceHost = *g_pServerSocketInitialNonce;
+        (*g_pServerSocketInitialNonce)++;
+    }
+    else
+    {
+        pChan->m_nNonceHost = *g_pClientSocketInitialNonce;
+        (*g_pClientSocketInitialNonce)++;
+    }
+
+    pChan->m_nLastRecvNonce = pChan->m_nNonceHost - 1;
+    memset(pChan->m_DataFlow, 0, sizeof(pChan->m_DataFlow));
+    pChan->m_MessageHandler->ConnectionStart(pChan);
+}
 
 //-----------------------------------------------------------------------------
 // Purpose: gets the netchannel resend rate
@@ -101,6 +248,35 @@ int CNetChan::GetNumBitsLeft(const bool bReliable)
     }
 
     return pStream->GetNumBitsLeft();
+}
+
+void CNetChan::SetMaxBufferSize(bool bReliable, int nBytes, bool bVoice)
+{
+    assert(!(bReliable && bVoice));
+    CUtlMemory<unsigned char>* pDataBuffer = &m_UnreliableDataBuffer;
+    bf_write* pStream = &m_StreamUnreliable;
+
+    if (bReliable)
+    {
+        pDataBuffer = &m_ReliableDataBuffer;
+        pStream = &m_StreamReliable;
+    }
+    else if (bVoice)
+    {
+        pDataBuffer = &m_VoiceDataBuffer;
+        pStream = &m_StreamVoice;
+    }
+
+    const int nNeededBytes = MAX(8000, MIN(nBytes, NET_MAX_PAYLOAD));
+
+    pDataBuffer->Purge();
+    pDataBuffer->EnsureCapacity(nNeededBytes);
+    *pStream = bf_write(pDataBuffer->Base(), nNeededBytes);
+}
+
+__declspec (noinline) void CNetChan::FlowNewPacket(const int flow, const int outSeqNr, const int inSeqNr, const int nChoked, const int nDropped, const int nSize)
+{
+    _FlowNewPacket(this, flow, outSeqNr, inSeqNr, nChoked, nDropped, nSize);
 }
 
 //-----------------------------------------------------------------------------
@@ -345,7 +521,7 @@ void CNetChan::_FlowUpdate(CNetChan* thisp, int flow, int addBytes)
 //-----------------------------------------------------------------------------
 void CNetChan::_Shutdown(CNetChan* pChan, const char* szReason, uint8_t bBadRep, bool bRemoveNow)
 {
-	CNetChan__Shutdown(pChan, szReason, bBadRep, bRemoveNow);
+    pChan->Shutdown(szReason, bBadRep, bRemoveNow);
 }
 
 //-----------------------------------------------------------------------------
@@ -959,14 +1135,27 @@ bool CNetChan::SendData(bf_write& msg, const bool bReliable)
 //-----------------------------------------------------------------------------
 INetMessage* CNetChan::FindMessage(const int type)
 {
-    const int numtypes = m_NetMessages.Count();
+    size_t nNetMessageTypes = m_pNetMessageTypes->Count();
+    if (!nNetMessageTypes)
+        return NULL;
 
-    for (int i = 0; i < numtypes; i++)
+    assert(!(m_pNetMessageTypes->NumAllocated() % 8));
+    __m256i target_type = _mm256_set1_epi32(type);
+
+    for (int i = 0; i < nNetMessageTypes; i += 8)
     {
-        INetMessage* const message = m_NetMessages[i];
+        const __m256i types = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(&m_pNetMessageTypes->Element(i)));
+        const __m256i mask = _mm256_cmpeq_epi32(types, target_type);
+        const int elementMask = _mm256_movemask_ps(_mm256_castsi256_ps(mask));
 
-        if (message->GetType() == type)
-            return message;
+        if (!elementMask)
+            continue;
+
+        const int messageIndex = i + _tzcnt_u32(elementMask);
+        if (messageIndex < nNetMessageTypes)
+            return m_NetMessages[messageIndex];
+        else
+            return NULL;
     }
 
     return NULL;
@@ -980,14 +1169,18 @@ INetMessage* CNetChan::FindMessage(const int type)
 bool CNetChan::RegisterMessage(INetMessage* msg)
 {
     Assert(msg);
+    const int messageType = msg->GetType();
 
-    if (FindMessage(msg->GetType()))
+    if (FindMessage(messageType))
     {
         Assert(0); // Duplicate registration!
         return false;
     }
 
     m_NetMessages.AddToTail(msg);
+    m_pNetMessageTypes->AddToTail(static_cast<NetMessageType>(messageType));
+    m_pNetMessageTypes->EnsureCapacity(ALIGN_VALUE(m_pNetMessageTypes->Count(), 8));
+
     msg->SetNetChannel(this);
 
     return true;
@@ -1024,11 +1217,15 @@ void CNetChan::FlowUpdate(int flow, int addBytes)
 ///////////////////////////////////////////////////////////////////////////////
 void VNetChan::Detour(const bool bAttach) const
 {
+    DetourSetup(&CNetChan__CNetChan, &CNetChan::_CNetChan, bAttach);
+    DetourSetup(&CNetChan__Setup, &CNetChan::_Setup, bAttach);
 	DetourSetup(&CNetChan__Shutdown, &CNetChan::_Shutdown, bAttach);
 	DetourSetup(&CNetChan__FlowNewPacket, &CNetChan::_FlowNewPacket, bAttach);
 	DetourSetup(&CNetChan__ProcessMessages, &CNetChan::_ProcessMessages, bAttach);
     DetourSetup(&CNetChan__CreateFragmentsFromBuffer, &CNetChan::_CreateFragmentsFromBuffer, bAttach);
     DetourSetup(&CNetChan__SendSubChannelData, &CNetChan::_SendSubChannelData, bAttach);
     DetourSetup(&CNetChan__ReadSubChannelData, &CNetChan::_ReadSubChannelData, bAttach);
+    DetourSetup(&CNetChan__RegisterMessage, &CNetChan::_RegisterMessage, bAttach);
+    DetourSetup(&CNetChan__FindMessage, &CNetChan::_FindMessage, bAttach);
     DetourSetup(&CNetChan__FlowUpdate, &CNetChan::_FlowUpdate, bAttach);
 }
