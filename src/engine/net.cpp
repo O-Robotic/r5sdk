@@ -67,7 +67,6 @@ ConVar net_useRandomKey("net_useRandomKey", "1", FCVAR_RELEASE, "Use random AES 
 
 static ConVar net_tracePayload("net_tracePayload", "0", FCVAR_DEVELOPMENTONLY, "Log the payload of the send/recv datagram to a file on the disk.");
 static ConVar net_encryptionEnable("net_encryptionEnable", "1", FCVAR_DEVELOPMENTONLY | FCVAR_REPLICATED, "Use AES encryption on game packets.");
-static ConVar net_maxRecvCall("net_maxRecvCall", "1000", FCVAR_DEVELOPMENTONLY);
 static ConVar net_maxDatagramReceiveAttempts("net_maxDatagramReceiveAttempts", "1000", FCVAR_DEVELOPMENTONLY);
 
 ConVar net_compression_method("net_compression_method", "0", FCVAR_RELEASE, "Sets the compression method used for net packets", "0 = LZSS, 1 = ZSTD");
@@ -210,6 +209,14 @@ int NET_DecryptPacket(netkey_t* const pNetKey, const uint8_t* const pInputBuffer
     return v_NET_DecryptPacket(pNetKey, pEncHdr->GetData(), nDataSize, pEncHdr->m_IV, nullptr, nullptr, nullptr, pEncHdr->m_TAG, nullptr, pOutputBuffer);
 }
 
+enum class DatagramRecieveResult
+{
+    Empty,
+    ContinueError,
+    ExitError,
+    Data
+};
+
 //-----------------------------------------------------------------------------
 // Purpose: Attempts to recieve data from a socket up to net_maxRecvCall times
 // Input  : *pPacket - 
@@ -218,11 +225,8 @@ int NET_DecryptPacket(netkey_t* const pNetKey, const uint8_t* const pInputBuffer
 //          &nBytesRecieved -
 // Output : true on packet read, false on no packet read
 //-----------------------------------------------------------------------------
-static bool NET_TryRecieveRawDatagram(netpacket_t* const pPacket, uint8_t* const pSocketRecieveBuffer, const int nSocketRecieveBufferLen, int& nBytesRecieved)
+static DatagramRecieveResult NET_TryRecieveRawDatagram(netpacket_t* const pPacket, uint8_t* const pSocketRecieveBuffer, const int nSocketRecieveBufferLen, int& nBytesRecieved)
 {
-    int nRecvAttempt = 0;
-    const int nMaxRecvAttempts = net_maxRecvCall.GetInt();
-
     netsocket_t& socket = g_pNetSockets->Element(pPacket->source);
     sockaddr_storage recvAddr;
 
@@ -235,29 +239,30 @@ static bool NET_TryRecieveRawDatagram(netpacket_t* const pPacket, uint8_t* const
         if (res > 0) //Has data
         {
             nBytesRecieved = res;
-            break;
+
+            if (recvAddr.ss_family == AF_INET6 || recvAddr.ss_family == AF_INET)
+                pPacket->from.SetFromSockadr(&recvAddr);
+            else
+                pPacket->from.Clear();
+
+            return DatagramRecieveResult::Data;
         }
         else if (res == 0) //Connection closed
         {
-            return false;
+            return DatagramRecieveResult::Empty;
         }
         else //Error
         {
             const int error = NET_GetLastError();
-            if (error == WSAEWOULDBLOCK || error == WSAEMSGSIZE)
-                return false;
+            if (error == WSAEWOULDBLOCK)
+                return DatagramRecieveResult::Empty;
+
+            if (error == WSAEMSGSIZE)
+                return DatagramRecieveResult::ContinueError;
+
+            return DatagramRecieveResult::ExitError;
         }
-
-        if (nRecvAttempt++ >= nMaxRecvAttempts)
-            return false;
     }
-
-    if (recvAddr.ss_family == AF_INET6 || recvAddr.ss_family == AF_INET)
-        pPacket->from.SetFromSockadr(&recvAddr);
-    else
-        pPacket->from.Clear();
-
-    return true;
 }
 
 //-----------------------------------------------------------------------------
@@ -332,8 +337,13 @@ bool NET_ReceiveDatagram(int iSocket, netpacket_s* pInpacket, bool bEncrypted)
     for (int iAttempt = 0; iAttempt < nMaxAttempts; iAttempt++)
     {
         int nBytesRecieved = 0;
-        if (!NET_TryRecieveRawDatagram(pInpacket, sockReadBuff, sizeof(sockReadBuff), nBytesRecieved))
+        const DatagramRecieveResult result = NET_TryRecieveRawDatagram(pInpacket, sockReadBuff, sizeof(sockReadBuff), nBytesRecieved);
+
+        if (result == DatagramRecieveResult::Empty || result == DatagramRecieveResult::ExitError)
             return false;
+
+        if (result == DatagramRecieveResult::ContinueError)
+            continue;
 
         //Did we successfully decode a packet, if yes we are done, if no we will keep looping till we have no data in the socket or we get a good packet
         if (NET_ProcessRawRecievedPacket(iSocket, (const uint8_t*)sockReadBuff, nBytesRecieved, pInpacket, bEncryptPacket))
