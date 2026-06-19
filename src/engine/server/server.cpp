@@ -22,6 +22,10 @@
 #include "pluginsystem/pluginsystem.h"
 #include "game/server/gameinterface.h"
 
+#include "networksystem/hostmanager.h"
+#include "jwt/include/decode.h"
+#include "mbedtls/include/mbedtls/sha256.h"
+
 //---------------------------------------------------------------------------------
 // Console variables
 //---------------------------------------------------------------------------------
@@ -238,12 +242,164 @@ bool CServer::SpawnServer(CServer* pServer, const char* pszMapName, const char* 
 	return bSpawnResult;
 }
 
+bool CServer::HandleC2SAuthentication( char* pszToken, size_t nTokenLength, const char* const pszPersonaName, uint64_t platformUserID, netadr_t* pAdr ) 
+{
+#define ERROR_AND_RETURN( fmt, ... )                                                   \
+	do                                                                                 \
+	{                                                                                  \
+		CServer__RejectConnection( this, m_Socket, pAdr, fmt, ##__VA_ARGS__ ); \
+		if ( claims )                                                                  \
+		{                                                                              \
+			l8w8jwt_free_claims( claims, numClaims );                                  \
+		}                                                                              \
+		return false;                                                                  \
+	} while ( 0 )\
+
+
+    l8w8jwt_claim* claims	 = nullptr;
+	size_t		   numClaims = 0;
+
+	struct l8w8jwt_decoding_params params;
+	l8w8jwt_decoding_params_init( &params );
+
+	params.alg = L8W8JWT_ALG_RS256;
+
+	params.jwt		  = pszToken;
+	params.jwt_length = nTokenLength;
+
+	std::shared_lock lock( s_jwtPublicKeyMutex );
+	params.verification_key		   = (unsigned char*)JWT_PUBLIC_KEY.c_str();
+	params.verification_key_length = JWT_PUBLIC_KEY.size();
+
+	params.validate_exp			 = sv_onlineAuthValidateExpiry.GetBool();
+	params.exp_tolerance_seconds = (uint8_t)sv_onlineAuthExpiryTolerance.GetInt();
+
+	params.validate_iat			 = sv_onlineAuthValidateIssuedAt.GetBool();
+	params.iat_tolerance_seconds = (uint8_t)sv_onlineAuthIssuedAtTolerance.GetInt();
+
+	enum l8w8jwt_validation_result validation_result;
+	const int					   r = l8w8jwt_decode( &params, &validation_result, &claims, &numClaims );
+
+	if ( r != L8W8JWT_SUCCESS )
+		ERROR_AND_RETURN( "Code %i", r );
+
+	if ( validation_result != L8W8JWT_VALID )
+	{
+		char reasonBuffer[64];
+		l8w8jwt_get_validation_result_desc( validation_result, reasonBuffer, sizeof( reasonBuffer ) );
+
+		ERROR_AND_RETURN( "%s", reasonBuffer );
+	}
+
+	bool foundSessionId = false;
+	for ( size_t i = 0; i < numClaims; ++i )
+	{
+		const l8w8jwt_claim& claim = claims[i];
+
+		// session id
+		if ( !strcmp( claim.key, "sessionId" ) )
+		{
+			const char* const sessionId = claim.value;
+			const CNetAdr&	  hostIP	= g_ServerHostManager.GetHostIP();
+
+			char	  newId[256];
+			const int idLen = snprintf( newId, sizeof( newId ), "%llu-%s-%s", platformUserID, pszPersonaName, hostIP.ToString() );
+
+			if ( idLen < 0 )
+				ERROR_AND_RETURN( "Session ID stitching failed" );
+
+			uint8_t sessionHash[32]; // hash decoded from JWT token
+			V_hextobinary( sessionId, claim.value_length, sessionHash, sizeof( sessionHash ) );
+
+			uint8_t	  oobHash[32]; // hash of data collected from out of band packet
+			const int shRet = mbedtls_sha256( (const uint8_t*)newId, idLen, oobHash, NULL );
+
+			if ( shRet != NULL )
+				ERROR_AND_RETURN( "Session ID hashing failed" );
+
+			if ( memcmp( oobHash, sessionHash, sizeof( sessionHash ) ) != 0 )
+				ERROR_AND_RETURN( "Token is not authorized for the connecting client" );
+
+			foundSessionId = true;
+		}
+	}
+
+	if ( !foundSessionId )
+		ERROR_AND_RETURN( "No session ID" );
+
+	l8w8jwt_free_claims( claims, numClaims );
+	return true;
+#undef ERROR_AND_RETURN
+}
+
+void CServer::VProcessC2SConnect(CServer* thisp, bf_read* pBuff, netadr_t* pAdr)
+{
+	const bool bClientHasAuthInfo = pBuff->ReadOneBit();
+
+    if (sv_onlineAuthEnable.GetBool() && !pAdr->IsLoopback())
+    {
+        if (!bClientHasAuthInfo)
+        {
+			CServer__RejectConnection( thisp, thisp->m_Socket, pAdr, "Missing Authentication Info" );
+			return;
+        }
+
+        int nTokenLength;
+		char szAuthToken[1024];
+
+        if (!pBuff->ReadString(szAuthToken, sizeof(szAuthToken), false, &nTokenLength))
+        {
+			CServer__RejectConnection( thisp, thisp->m_Socket, pAdr, "Oversized JWT Token" );
+			return;
+        }
+
+        if ( nTokenLength == 0 || szAuthToken[0] == '\0' )
+		{
+			CServer__RejectConnection( thisp, thisp->m_Socket, pAdr, "Missing Token" );
+			return;
+		}
+
+        const ssize_t nBufferPos = pBuff->GetNumBitsRead();
+
+        // Skip past unneeded data
+        // netProtocolVersion = 32 bits
+        // gameVersion = 32 bits
+        // challenge = 32 bits
+        // reservation = 32 bits
+        // platformID = 8 bits
+		pBuff->SeekRelative( 136 );
+
+        char		   szPersonaName[64];
+        const uint64_t platformUserID = static_cast<uint64_t>(pBuff->ReadLongLong());
+
+        pBuff->ReadString( szPersonaName, sizeof( szPersonaName ) );
+
+        //Make sure to seek back to the start of the buffer so the main process func doesnt fail
+		pBuff->Seek( nBufferPos );
+
+        if (!thisp->HandleC2SAuthentication(szAuthToken, static_cast<size_t>(nTokenLength), szPersonaName, platformUserID, pAdr))
+			return;
+    }
+    else if (bClientHasAuthInfo)
+    {
+        if (!pBuff->SkipString())
+        {
+			CServer__RejectConnection( thisp, thisp->m_Socket, pAdr, "Malformed C2S_CONNECT packet" );
+			return;
+        }
+    }
+
+#undef ERROR_AND_RETURN
+    CServer__ProcessC2SConnect( thisp, pBuff, pAdr );
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 void VServer::Detour(const bool bAttach) const
 {
 	DetourSetup(&CServer__SpawnServer, &CServer::SpawnServer, bAttach);
 	DetourSetup(&CServer__RunFrame, &CServer::RunFrame, bAttach);
 	DetourSetup(&CServer__ConnectClient, &CServer::ConnectClient, bAttach);
+	DetourSetup( &CServer__ProcessC2SConnect, &CServer::VProcessC2SConnect, bAttach );
 }
 
 ///////////////////////////////////////////////////////////////////////////////

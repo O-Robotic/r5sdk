@@ -19,6 +19,7 @@
 #include "listmanager.h"
 #include <ebisusdk/EbisuSDK.h>
 #include <misc/ImGuiNotify.hpp>
+#include "engine/client/clientstate.h"
 
 //-----------------------------------------------------------------------------
 // Purpose: 
@@ -110,13 +111,10 @@ void CServerListManager::ConnectToServer(const string& svServer, const string& s
     Cbuf_AddText(Cbuf_GetCurrentPlayer(), command.c_str(), cmd_source_t::kCommandSrcCode);
 }
 
-
-static ConVar cl_onlineAuthEnable("cl_onlineAuthEnable", "1", FCVAR_RELEASE, "Enables the client-side online authentication system");
-
+extern ConVar cl_onlineAuthEnable;
 static ConVar cl_onlineAuthToken("cl_onlineAuthToken", "", FCVAR_USERINFO | FCVAR_DONTRECORD | FCVAR_SERVER_CANNOT_QUERY | FCVAR_PLATFORM_SYSTEM, "The client's online authentication token");
 static ConVar cl_onlineAuthTokenSignature1("cl_onlineAuthTokenSignature1", "", FCVAR_USERINFO | FCVAR_DONTRECORD | FCVAR_SERVER_CANNOT_QUERY | FCVAR_PLATFORM_SYSTEM, "The client's online authentication token signature", false, 0.f, false, 0.f, "Primary");
 static ConVar cl_onlineAuthTokenSignature2("cl_onlineAuthTokenSignature2", "", FCVAR_USERINFO | FCVAR_DONTRECORD | FCVAR_SERVER_CANNOT_QUERY | FCVAR_PLATFORM_SYSTEM, "The client's online authentication token signature", false, 0.f, false, 0.f, "Secondary");
-
 
 bool ServerList_SetTokenCVars(const string& msToken)
 {
@@ -170,19 +168,17 @@ void CServerListManager::ConnectToServerById(string svId) const
         const string authCode = cl_onlineAuthEnable.GetBool() ? g_OriginAuthCode : "";
         const bool bSuccess = g_MasterServer.AuthForConnection(*g_NucleusID, svId, authCode.c_str(), msToken, connInfo, message);
 
-        g_TaskQueue.Dispatch([this, bSuccess, message = std::move(message), connInfo = std::move(connInfo), msToken = std::move(msToken)] {
-            
-            ServerList_SetTokenCVars(msToken);
-
-            if (!bSuccess)
+        g_TaskQueue.Dispatch([this, bSuccess, message = std::move( message ), connInfo = std::move( connInfo ), msToken = std::move( msToken )]
+        {
+			if ( !bSuccess )
             {
                 Error(eDLL_T::MS, ERROR_SUCCESS, "ConnectToServer: %s\n", message.c_str());
                 ImGui::InsertNotification({ ImGuiToastType::Error, 5000, "Failed to connect!\n%s", message.c_str() });
                 return;
             }
 
+			g_OnlineAuthToken = std::move( msToken );
             this->ConnectToServer(connInfo.addr, connInfo.port, connInfo.key);
-        
         }, 0);
     });
 

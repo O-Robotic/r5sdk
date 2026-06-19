@@ -64,6 +64,10 @@ public:
 	void BroadcastMessage(CNetMessage* const msg, const bool onlyActive, const bool reliable);
 	static void RunFrame(CServer* pServer);
 	static bool SpawnServer(CServer* pServer, const char* pszMapName, const char* pszMapGroupName);
+
+    bool HandleC2SAuthentication( char* pszToken, size_t nTokenLength, const char* const pszPersonaName, uint64_t personaID, netadr_t* pAdr ); 
+
+    static void VProcessC2SConnect( CServer* thisp, bf_read* pBuff, netadr_t* pAdr );
 #endif // !CLIENT_DLL
 
 private:
@@ -118,12 +122,32 @@ extern ConVar sv_showconnecting;
 extern ConVar sv_globalBanlist;
 extern ConVar sv_banlistRefreshRate;
 
+inline ConVar sv_onlineAuthEnable( "sv_onlineAuthEnable", "1", FCVAR_RELEASE, "Enables the server-side online authentication system" );
+
+inline ConVar sv_onlineAuthValidateExpiry( "sv_onlineAuthValidateExpiry", "1", FCVAR_RELEASE,
+										   "Validate the online authentication token 'expiry' claim" );
+inline ConVar sv_onlineAuthValidateIssuedAt( "sv_onlineAuthValidateIssuedAt", "1", FCVAR_RELEASE,
+											 "Validate the online authentication token 'issued at' claim" );
+
+inline ConVar sv_onlineAuthExpiryTolerance( "sv_onlineAuthExpiryTolerance", "1", FCVAR_DEVELOPMENTONLY,
+											"The online authentication token 'expiry' claim tolerance in seconds", true, 0.f, true,
+											float( UINT8_MAX ), "Must range between [0,255]" );
+inline ConVar sv_onlineAuthIssuedAtTolerance( "sv_onlineAuthIssuedAtTolerance", "30", FCVAR_DEVELOPMENTONLY,
+											  "The online authentication token 'issued at' claim tolerance in seconds", true, 0.f, true,
+											  float( UINT8_MAX ), "Must range between [0,255]" );
+
+// [rexx]: yeah yeah. stdlib bad etc.
+inline std::string		  JWT_PUBLIC_KEY;
+inline std::string		  JWT_PUBLIC_KEY_HASH;
+inline std::shared_mutex s_jwtPublicKeyMutex;
+
 /* ==== CSERVER ========================================================================================================================================================= */
 inline void(*CServer__RunFrame)(CServer* pServer);
 inline CClient*(*CServer__ConnectClient)(CServer* pServer, user_creds_s* pCreds);
-inline void*(*CServer__RejectConnection)(CServer* pServer, int iSocket, netadr_t* pNetAdr, const char* szMessage);
+inline void*(*CServer__RejectConnection)(CServer* pServer, int iSocket, netadr_t* pNetAdr, const char* szMessage, ...);
 inline void (*CServer__BroadcastMessage)(CServer* pServer, CNetMessage* const msg, const bool onlyActive, const bool reliable);
 inline bool(*CServer__SpawnServer)(CServer* pServer, const char* pszMapName, const char* pszMapGroupName);
+inline void ( *CServer__ProcessC2SConnect )( CServer* thisp, bf_read* pBuff, netadr_t* pAdr );
 
 ///////////////////////////////////////////////////////////////////////////////
 class VServer : public IDetour
@@ -136,6 +160,7 @@ class VServer : public IDetour
 		LogFunAdr("CServer::RejectConnection", CServer__RejectConnection);
 		LogFunAdr("CServer::BroadcastMessage", CServer__BroadcastMessage);
 		LogFunAdr("CServer::SpawnServer", CServer__SpawnServer);
+		LogFunAdr( "Cserver::ProcessC2SConnect", CServer__ProcessC2SConnect );
 		LogVarAdr("g_Server", g_pServer);
 #endif // !CLIENT_DLL
 	}
@@ -148,6 +173,8 @@ class VServer : public IDetour
 		Module_FindPattern(g_GameDll, "4C 89 4C 24 ?? 53 55 56 57 48 81 EC ?? ?? ?? ?? 49 8B D9").GetPtr(CServer__RejectConnection);
 		Module_FindPattern(g_GameDll, "4C 8B DC 45 88 43 18 56").GetPtr(CServer__BroadcastMessage);
 		Module_FindPattern(g_GameDll, "48 8B C4 53 55 56 57 41 54 41 55 41 57").GetPtr(CServer__SpawnServer);
+		Module_FindPattern( g_GameDll, "4C 89 44 24 ?? 48 89 54 24 ?? 48 89 4C 24 ?? 55 53 56 57 41 54 41 55 41 56 41 57 48 8D AC 24 ?? ?? ?? ?? 48 81 EC ?? ?? ?? ?? 44 8B 4A" )
+            .GetPtr( CServer__ProcessC2SConnect );
 #endif // !CLIENT_DLL
 	}
 	virtual void GetVar(void) const

@@ -16,8 +16,6 @@
 #include "engine/client/client.h"
 #ifndef CLIENT_DLL
 #include "networksystem/hostmanager.h"
-#include "jwt/include/decode.h"
-#include "mbedtls/include/mbedtls/sha256.h"
 #include "game/server/recipientfilter.h"
 #include "game/server/util_server.h"
 #include "tier1/fmtstr.h"
@@ -65,21 +63,7 @@ CClientExtended* CClient::GetClientExtended(void) const
 }
 #endif // !CLIENT_DLL
 
-ConVar sv_onlineAuthEnable("sv_onlineAuthEnable", "1", FCVAR_RELEASE, "Enables the server-side online authentication system");
-
-static ConVar sv_onlineAuthValidateExpiry("sv_onlineAuthValidateExpiry", "1", FCVAR_RELEASE, "Validate the online authentication token 'expiry' claim");
-static ConVar sv_onlineAuthValidateIssuedAt("sv_onlineAuthValidateIssuedAt", "1", FCVAR_RELEASE, "Validate the online authentication token 'issued at' claim");
-
-static ConVar sv_onlineAuthExpiryTolerance("sv_onlineAuthExpiryTolerance", "1", FCVAR_DEVELOPMENTONLY, "The online authentication token 'expiry' claim tolerance in seconds", true, 0.f, true, float(UINT8_MAX), "Must range between [0,255]");
-static ConVar sv_onlineAuthIssuedAtTolerance("sv_onlineAuthIssuedAtTolerance", "30", FCVAR_DEVELOPMENTONLY, "The online authentication token 'issued at' claim tolerance in seconds", true, 0.f, true, float(UINT8_MAX), "Must range between [0,255]");
-
 static ConVar sv_quota_stringCmdsPerSecond("sv_quota_stringCmdsPerSecond", "32", FCVAR_RELEASE, "How many string commands per second clients are allowed to submit, 0 to disallow all string commands", true, 0.f, false, 0.f);
-
-// [rexx]: yeah yeah. stdlib bad etc.
-static std::string JWT_PUBLIC_KEY;
-static std::string JWT_PUBLIC_KEY_HASH;
-
-static std::mutex s_jwtPublicKeyMutex;
 
 void CClient::CheckMSForNewAuthKey()
 {
@@ -94,9 +78,9 @@ void CClient::CheckMSForNewAuthKey()
 				// sent them in the response
 				if (keyData.keyNeedsUpdate && (JWT_PUBLIC_KEY.length() == 0 || JWT_PUBLIC_KEY_HASH != keyData.keyHash))
 				{
-					std::lock_guard<std::mutex> lock(s_jwtPublicKeyMutex);
-					JWT_PUBLIC_KEY = keyData.keyData;
-					JWT_PUBLIC_KEY_HASH = keyData.keyHash;
+					std::unique_lock lock(s_jwtPublicKeyMutex);
+					JWT_PUBLIC_KEY = std::move(keyData.keyData);
+					JWT_PUBLIC_KEY_HASH = std::move(keyData.keyHash);
 				}
 			}
 			else
@@ -105,142 +89,6 @@ void CClient::CheckMSForNewAuthKey()
 			}
 		}
 	).detach();
-}
-//---------------------------------------------------------------------------------
-// Purpose: check whether this client is authorized to join this server
-// Input  : *playerName  - 
-//			*reasonBuf   - 
-//			reasonBufLen - 
-// Output : true if authorized, false otherwise
-//---------------------------------------------------------------------------------
-bool CClient::Authenticate(const char* const playerName, char* const reasonBuf, const size_t reasonBufLen)
-{
-#ifndef CLIENT_DLL
-	// don't bother checking origin auth on bots or local clients
-	if (IsFakeClient() || GetNetChan()->GetRemoteAddress().IsLoopback())
-		return true;
-
-	l8w8jwt_claim* claims = nullptr;
-	size_t numClaims = 0;
-
-	// formats the error reason, and frees the claims and returns
-#define ERROR_AND_RETURN(fmt, ...) \
-		do {\
-			V_snprintf(reasonBuf, reasonBufLen, fmt, ##__VA_ARGS__); \
-			if (claims) {\
-				l8w8jwt_free_claims(claims, numClaims); \
-			}\
-			return false; \
-		} while(0)\
-
-	KeyValues* const cl_onlineAuthTokenKv = this->m_ConVars->FindKey("cl_onlineAuthToken");
-	KeyValues* const cl_onlineAuthTokenSignature1Kv = this->m_ConVars->FindKey("cl_onlineAuthTokenSignature1");
-	KeyValues* const cl_onlineAuthTokenSignature2Kv = this->m_ConVars->FindKey("cl_onlineAuthTokenSignature2");
-
-	if (!cl_onlineAuthTokenKv)
-		ERROR_AND_RETURN("Missing token");
-
-	if (!cl_onlineAuthTokenSignature1Kv)
-		ERROR_AND_RETURN("Missing signature");
-
-	const char* const onlineAuthToken = cl_onlineAuthTokenKv->GetString();
-	const char* const onlineAuthTokenSignature1 = cl_onlineAuthTokenSignature1Kv->GetString();
-
-	if (!*onlineAuthToken)
-		ERROR_AND_RETURN("Empty token");
-
-	if (!*onlineAuthTokenSignature1)
-		ERROR_AND_RETURN("Empty signature");
-
-	// Note: don't check on this as this part is optional, and only used if the
-	// token signature length is > 255 characters.
-	const char* const onlineAuthTokenSignature2 = cl_onlineAuthTokenSignature2Kv->GetString();
-
-	char fullToken[1024]; // enough buffer for 3x255, which is cvar count * userinfo str limit.
-	const int tokenLen = snprintf(fullToken, sizeof(fullToken), "%s.%s%s", 
-		onlineAuthToken, onlineAuthTokenSignature1, onlineAuthTokenSignature2);
-
-	if (tokenLen < 0)
-		ERROR_AND_RETURN("Token stitching failed");
-
-
-	struct l8w8jwt_decoding_params params;
-	l8w8jwt_decoding_params_init(&params);
-
-	params.alg = L8W8JWT_ALG_RS256;
-
-	params.jwt = (char*)fullToken;
-	params.jwt_length = tokenLen;
-
-	std::lock_guard<std::mutex> lock(s_jwtPublicKeyMutex);
-	params.verification_key = (unsigned char*)JWT_PUBLIC_KEY.c_str();
-	params.verification_key_length = JWT_PUBLIC_KEY.size();
-
-	params.validate_exp = sv_onlineAuthValidateExpiry.GetBool();
-	params.exp_tolerance_seconds = (uint8_t)sv_onlineAuthExpiryTolerance.GetInt();
-
-	params.validate_iat = sv_onlineAuthValidateIssuedAt.GetBool();
-	params.iat_tolerance_seconds = (uint8_t)sv_onlineAuthIssuedAtTolerance.GetInt();
-
-	enum l8w8jwt_validation_result validation_result;
-	const int r = l8w8jwt_decode(&params, &validation_result, &claims, &numClaims);
-
-	if (r != L8W8JWT_SUCCESS)
-		ERROR_AND_RETURN("Code %i", r);
-
-	if (validation_result != L8W8JWT_VALID)
-	{
-		char reasonBuffer[64];
-		l8w8jwt_get_validation_result_desc(validation_result, reasonBuffer, sizeof(reasonBuffer));
-
-		ERROR_AND_RETURN("%s", reasonBuffer);
-	}
-
-	bool foundSessionId = false;
-	for (size_t i = 0; i < numClaims; ++i)
-	{
-		const l8w8jwt_claim& claim = claims[i];
-
-		// session id
-		if (!strcmp(claim.key, "sessionId"))
-		{
-			const char* const sessionId = claim.value;
-			const CNetAdr& hostIP = g_ServerHostManager.GetHostIP();
-
-			char newId[256];
-			const int idLen = snprintf(newId, sizeof(newId), "%llu-%s-%s",
-				(NucleusID_t)this->m_DataBlock.userData,
-				playerName,
-				hostIP.ToString());
-
-			if (idLen < 0)
-				ERROR_AND_RETURN("Session ID stitching failed");
-
-			uint8_t sessionHash[32]; // hash decoded from JWT token
-			V_hextobinary(sessionId, claim.value_length, sessionHash, sizeof(sessionHash));
-
-			uint8_t oobHash[32]; // hash of data collected from out of band packet
-			const int shRet = mbedtls_sha256((const uint8_t*)newId, idLen, oobHash, NULL);
-
-			if (shRet != NULL)
-				ERROR_AND_RETURN("Session ID hashing failed");
-
-			if (memcmp(oobHash, sessionHash, sizeof(sessionHash)) != 0)
-				ERROR_AND_RETURN("Token is not authorized for the connecting client");
-
-			foundSessionId = true;
-		}
-	}
-
-	if (!foundSessionId)
-		ERROR_AND_RETURN("No session ID");
-
-	l8w8jwt_free_claims(claims, numClaims);
-
-#undef ERROR_AND_RETURN
-#endif // !CLIENT_DLL
-
-	return true;
 }
 
 //---------------------------------------------------------------------------------
@@ -262,33 +110,6 @@ bool CClient::Connect(const char* szName, CNetChan* pNetChan, bool bFakePlayer,
 
 	if (!CClient__Connect(this, szName, pNetChan, bFakePlayer, conVars, szMessage, nMessageSize))
 		return false;
-
-#ifndef CLIENT_DLL
-
-#define REJECT_CONNECTION(fmt, ...) V_snprintf(szMessage, nMessageSize, fmt, ##__VA_ARGS__);
-
-	if (sv_onlineAuthEnable.GetBool())
-	{
-		char authFailReason[512];
-		if (!Authenticate(szName, authFailReason, sizeof(authFailReason)))
-		{
-			REJECT_CONNECTION("Failed to verify authentication token! [%s]", authFailReason);
-
-			const bool bEnableLogging = sv_showconnecting.GetBool();
-			if (bEnableLogging)
-			{
-				const char* const netAdr = pNetChan ? pNetChan->GetAddress() : "<unknown>";
-
-				Warning(eDLL_T::SERVER, "Client '%s' ('%llu') failed online authentication! [%s]\n",
-					netAdr, (NucleusID_t)m_DataBlock.userData, authFailReason);
-			}
-
-			return false;
-		}
-	}
-
-#undef REJECT_CONNECTION
-#endif // !CLIENT_DLL
 
 	return true;
 }

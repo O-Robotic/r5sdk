@@ -32,6 +32,7 @@
 #include <cctype>
 #include <cinttypes>
 #include <mutex>
+#include <shared_mutex>
 #include <thread>
 #include <vector>
 #include <string>

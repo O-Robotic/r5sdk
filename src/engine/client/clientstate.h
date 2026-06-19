@@ -30,6 +30,11 @@ public:
 	CUtlMemoryPool m_ClientFramePool;
 };
 
+inline ConVar cl_onlineAuthEnable( "cl_onlineAuthEnable", "1", FCVAR_RELEASE,
+										  "Enables the client-side online authentication system" );
+
+inline string g_OnlineAuthToken;
+
 ///////////////////////////////////////////////////////////////////////////////
 class CClientState : CS_INetChannelHandler, IConnectionlessPacketHandler, IServerMessageHandler, CClientSnapshotManager
 {
@@ -42,7 +47,7 @@ public: // Hook statics.
 	static bool _ProcessCreateStringTable(CClientState* thisptr, SVC_CreateStringTable* msg);
 	static bool _ProcessUserMessage(CClientState* thisptr, SVC_UserMessage* msg);
 	static void VConnect(CClientState* thisptr, connectparams_t* connectParams);
-
+	static void VWriteC2SConnect( CClientState* thisp, bf_write* pBuff, int challenge );
 
 public:
 	bool IsPaused() const;
@@ -232,6 +237,7 @@ inline void(*CClientState__Disconnect)(CClientState* thisptr, bool bSendTracking
 inline bool(*CClientState__ConnectionStart)(CClientState* thisptr, CNetChan* chan);
 inline void(*CClientState__ConnectionClosing)(CClientState* thisptr, const char* szReason);
 inline bool(*CClientState__HookClientStringTable)(CClientState* thisptr, const char* tableName);
+inline void ( *CClientState__WriteC2SConnect )( CClientState* thisptr, bf_write* pBuff, int challenge );
 
 inline bool(*CClientState__ProcessStringCmd)(CClientState* thisptr, NET_StringCmd* msg);
 inline bool(*CClientState__ProcessServerTick)(CClientState* thisptr, SVC_ServerTick* msg);
@@ -249,6 +255,7 @@ class VClientState : public IDetour
 		LogFunAdr("CClientState::ConnectionStart", CClientState__ConnectionStart);
 		LogFunAdr("CClientState::ConnectionClosing", CClientState__ConnectionClosing);
 		LogFunAdr("CClientState::HookClientStringTable", CClientState__HookClientStringTable);
+		LogFunAdr( "CClientState::WriteC2SConnect", CClientState__WriteC2SConnect );
 		LogFunAdr("CClientState::ProcessStringCmd", CClientState__ProcessStringCmd);
 		LogFunAdr("CClientState::ProcessServerTick", CClientState__ProcessServerTick);
 		LogFunAdr("CClientState::ProcessCreateStringTable", CClientState__ProcessCreateStringTable);
@@ -264,7 +271,8 @@ class VClientState : public IDetour
 		Module_FindPattern(g_GameDll, "48 89 5C 24 ?? 48 89 6C 24 ?? 48 89 74 24 ?? 57 41 56 41 57 48 83 EC ?? 48 8B 05 ?? ?? ?? ?? 48 8B F2").GetPtr(CClientState__ConnectionStart);
 		Module_FindPattern(g_GameDll, "40 53 48 83 EC 20 83 B9 ?? ?? ?? ?? ?? 48 8B DA 0F 8E ?? ?? ?? ??").GetPtr(CClientState__ConnectionClosing);
 		Module_FindPattern(g_GameDll, "48 89 5C 24 ?? 57 48 83 EC 20 48 8B D9 48 8B FA 48 8B 89 ?? ?? ?? ?? 48 85 C9 0F 84 ?? ?? ?? ??").GetPtr(CClientState__HookClientStringTable);
-		Module_FindPattern(g_GameDll, "40 53 48 81 EC ?? ?? ?? ?? 80 B9 ?? ?? ?? ?? ?? 48 8B DA").GetPtr(CClientState__ProcessStringCmd);
+		Module_FindPattern( g_GameDll, "48 89 5C 24 ?? 48 89 6C 24 ?? 56 57 41 56 48 83 EC ?? 48 8B FA" ).GetPtr( CClientState__WriteC2SConnect );
+        Module_FindPattern(g_GameDll, "40 53 48 81 EC ?? ?? ?? ?? 80 B9 ?? ?? ?? ?? ?? 48 8B DA").GetPtr(CClientState__ProcessStringCmd);
 		Module_FindPattern(g_GameDll, "40 57 48 83 EC 20 83 B9 ?? ?? ?? ?? ?? 48 8B F9 7C 66").GetPtr(CClientState__ProcessServerTick);
 		Module_FindPattern(g_GameDll, "48 89 4C 24 ?? 53 56 48 81 EC ?? ?? ?? ?? 83 B9 ?? ?? ?? ?? ??").GetPtr(CClientState__ProcessCreateStringTable);
 		Module_FindPattern(g_GameDll, "48 89 5C 24 ?? 55 48 8D AC 24 ?? ?? ?? ?? 48 81 EC ?? ?? ?? ?? 83 B9 ?? ?? ?? ?? ??").GetPtr(CClientState__ProcessUserMessage);

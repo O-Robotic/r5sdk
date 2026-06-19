@@ -386,6 +386,19 @@ bool CClientState::_ProcessUserMessage(CClientState* thisptr, SVC_UserMessage* m
     return true;
 }
 
+void CClientState::VWriteC2SConnect(CClientState* thisp, bf_write* pBuff, int challenge)
+{
+	const bool bClientAuthEnabled = cl_onlineAuthEnable.GetBool() && !g_OnlineAuthToken.empty();
+	pBuff->WriteOneBit( bClientAuthEnabled );
+
+    if (bClientAuthEnabled)
+    {
+		pBuff->WriteString( g_OnlineAuthToken.c_str() );
+    }
+
+	CClientState__WriteC2SConnect( thisp, pBuff, challenge );
+}
+
 bool IsLocalHost(connectparams_t* connectParams)
 {
     return (strstr(connectParams->netAdr, "localhost") || strstr(connectParams->netAdr, "127.0.0.1"));
@@ -445,6 +458,7 @@ void VClientState::Detour(const bool bAttach) const
     DetourSetup(&CClientState__ProcessCreateStringTable, &CClientState::_ProcessCreateStringTable, bAttach);
     DetourSetup(&CClientState__ProcessUserMessage, &CClientState::_ProcessUserMessage, bAttach);
     DetourSetup(&CClientState__Connect, &CClientState::VConnect, bAttach);
+	DetourSetup( &CClientState__WriteC2SConnect, &CClientState::VWriteC2SConnect, bAttach );
 }
 
 /////////////////////////////////////////////////////////////////////////////////
