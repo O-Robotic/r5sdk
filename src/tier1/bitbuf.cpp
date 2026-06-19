@@ -599,6 +599,35 @@ bool CBitRead::ReadString(char* pStr, int maxLen, bool bLine, int* pOutNumChars)
 	return !IsOverflowed() && !bTooSmall;
 }
 
+//---------------------------------------------------------------------------------
+// Purpose: Skip past a string till a null terminator or a new line
+// Input  : bEndOnNewLine - Should a \n be treated like the end of the string
+//          pnCharsSkipped - Optional pointer to hold the number of chars skipping including the terminator
+// Output : false on overflow, true on success
+//---------------------------------------------------------------------------------
+bool CBitRead::SkipString(const bool bEndOnNewLine, size_t* const pnCharsSkipped)
+{
+	size_t nCharsSkipped = 0;
+
+    for (;;)
+    {
+		const char val = (char)ReadChar();
+
+        nCharsSkipped++;
+
+		if ( val == 0 )
+			break;
+		else if ( bEndOnNewLine && val == '\n' )
+			break;
+
+    }
+
+    if ( pnCharsSkipped )
+		*pnCharsSkipped = nCharsSkipped;
+
+    return !IsOverflowed();
+}
+
 //-----------------------------------------------------------------------------
 bool CBitRead::ReadWString(OUT_Z_CAP(maxLenInChars) wchar_t* pStr, int maxLenInChars, bool bLine, int* pOutNumChars)
 {

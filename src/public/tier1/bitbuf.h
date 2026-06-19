@@ -247,6 +247,7 @@ public:
 	// complete (this will never exceed bufLen-1).
 	//
 	bool            ReadString(char* pStr, int bufLen, bool bLine = false, int* pOutNumChars = NULL);
+	bool            SkipString( const bool bEndOnNewLine = false, size_t* const pnCharsSkipped = nullptr );
 	bool            ReadWString(wchar_t* pStr, int bufLen, bool bLine = false, int* pOutNumChars = NULL);
 
 	// Reads a string and allocates memory for it. If the string in the buffer
