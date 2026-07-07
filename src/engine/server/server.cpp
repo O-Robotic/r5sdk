@@ -1,4 +1,4 @@
-//=============================================================================//
+﻿//=============================================================================//
 //
 // Purpose: 
 //
@@ -223,6 +223,9 @@ void CServer::BroadcastMessage(CNetMessage* const msg, const bool onlyActive, co
 void CServer::RunFrame(CServer* pServer)
 {
 	CServer__RunFrame(pServer);
+
+	for (auto& callback : !PluginSystem()->GetServerFrameCallbacks())
+		callback.Function()(pServer);
 }
 
 bool CServer::SpawnServer(CServer* pServer, const char* pszMapName, const char* pszMapGroupName)
@@ -249,3 +252,4 @@ void VServer::Detour(const bool bAttach) const
 ///////////////////////////////////////////////////////////////////////////////
 CServer* g_pServer = nullptr;
 CClientExtended CServer::sm_ClientsExtended[MAX_PLAYERS];
+

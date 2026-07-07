@@ -1,6 +1,8 @@
 #pragma once
 
-#define INTERFACEVERSION_PLUGINSYSTEM "VPluginSystem002"
+#define INTERFACEVERSION_PLUGINSYSTEM "VPluginSystem003"
+
+class CServer;
 
 struct PluginOperation_s
 {
@@ -23,6 +25,7 @@ struct PluginOperation_s
 		OnRegisterServerScriptFunctions = 5,
 		OnRegisterClientScriptFunctions = 6,
 		OnRegisterUIScriptFunctions     = 7,
+		CServer_RunFrame                = 8,
 	};
 
 	PluginCommand_e commandId;

@@ -209,6 +209,8 @@ public:
 
 	char			GetLifeState(void) const { return m_lifeState; }
 	int            GetTeamNum(void) const { return m_iTeamNum; }
+	const EHANDLE& GetThirdPersonEnt() const { return m_hThirdPersonEnt; }
+	const EHANDLE* GetViewModels() const { return m_hViewModels; }
 private:
 	char m_szNetname[256];
 	bool m_zoomViewdriftDebounceEnabled;
