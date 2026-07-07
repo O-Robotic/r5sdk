@@ -48,11 +48,6 @@ model_t* CBaseEntity::GetModel(void)
 	return (model_t*)g_pModelInfoServer->GetModel(GetModelIndex());
 }
 
-inline int CBaseEntity::GetModelIndex(void) const
-{
-	return m_nModelIndex;
-}
-
 const HSCRIPT CBaseEntity::GetScriptInstance()
 {
 	return v_CBaseEntity__GetScriptInstance(this);

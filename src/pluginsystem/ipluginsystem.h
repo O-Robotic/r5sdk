@@ -1,6 +1,6 @@
 #pragma once
 
-#define INTERFACEVERSION_PLUGINSYSTEM "VPluginSystem003"
+#define INTERFACEVERSION_PLUGINSYSTEM "VPluginSystem002"
 
 class CServer;
 

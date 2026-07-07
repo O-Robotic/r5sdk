@@ -117,7 +117,7 @@ public:
 	const CServerNetworkProperty* NetworkProp() const;
 
 	model_t*		GetModel(void);
-	int				GetModelIndex(void) const; // Virtual in-engine!
+	inline int		GetModelIndex(void) const { return m_nModelIndex; } // Virtual in-engine!
 	inline string_t	GetModelName(void) const { return m_ModelName; }
 	const Vector3D& GetViewOffset(void) const { return m_vecViewOffset; }
 	const Vector3D& GetAbsOrigin(void) const { return m_vecAbsOrigin; }
