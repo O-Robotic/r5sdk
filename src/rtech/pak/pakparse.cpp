@@ -195,6 +195,12 @@ static void Pak_RunAssetLoadingJobs(PakFile_s* const pak)
 //-----------------------------------------------------------------------------
 static PakHandle_t Pak_LoadAsync(const char* const fileName, CAlignedMemAlloc* const allocator, const int logChannel, const bool bUnk)
 {
+    if (!V_IsValidPath(fileName))
+    {
+        Error(eDLL_T::RTECH, NO_ERROR, "Rejected pak file load request with unsafe path \"%s\". Report this at https://github.com/R5Reloaded/r5sdk/issues\n", fileName);
+        return PAK_INVALID_HANDLE;
+    }
+
     const int selectedLogChannel = pak_debugchannel.GetInt();
 
     if (selectedLogChannel && (selectedLogChannel == -1 || logChannel == selectedLogChannel))
@@ -880,6 +886,14 @@ static bool Pak_SetupBuffersAndLoad(const PakHandle_t pakId)
     const char* pakFilePath = loadedInfo->fileName;
     assert(pakFilePath);
 
+    if (!V_IsValidPath(pakFilePath))
+    {
+        Error(eDLL_T::RTECH, loadedInfo->logChannel == 5 ? EXIT_FAILURE : NO_ERROR, "Unsafe package file path \"%s\". Report this at https://github.com/R5Reloaded/r5sdk/issues\n", pakFilePath);
+
+        loadedInfo->status = PAK_STATUS_ERROR;
+        return false;
+    }
+
     const char* nameUnqualified = V_UnqualifiedFileName(pakFilePath);
     char relativeFilePath[MAX_OSPATH];
 
@@ -985,6 +999,14 @@ static bool Pak_SetupBuffersAndLoad(const PakHandle_t pakId)
 
         memcpy(libraryFilePath, pakFilePath, unqualifiedFileNameLen);
         memcpy(&libraryFilePath[unqualifiedFileNameLen], dllExt, sizeof(dllExt));
+
+        if (!V_IsValidPath(libraryFilePath))
+        {
+            Error(eDLL_T::RTECH, loadedInfo->logChannel == 5 ? EXIT_FAILURE : NO_ERROR, "Unsafe module path \"%s\" for package file \"%s\". Report this at https://github.com/R5Reloaded/r5sdk/issues\n", libraryFilePath, pakFilePath);
+
+            loadedInfo->status = PAK_STATUS_ERROR;
+            return false;
+        }
 
         const HMODULE hModule = LoadLibraryA(libraryFilePath);
         loadedInfo->hModule = hModule;
