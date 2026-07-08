@@ -164,6 +164,7 @@ public:
 	CREATE_PLUGIN_CALLBACK(OnRegisterServerScriptFunctionsFn, void(*)(CSquirrelVM*), GetRegisterServerScriptFuncsCallbacks, registerServerScriptFuncsCallbacks);
 	CREATE_PLUGIN_CALLBACK(OnRegisterClientScriptFunctionsFn, void(*)(CSquirrelVM*), GetRegisterClientScriptFuncsCallbacks, registerClientScriptFuncsCallbacks);
 	CREATE_PLUGIN_CALLBACK(OnRegisterUIScriptFunctionsFn, void(*)(CSquirrelVM*), GetRegisterUIScriptFuncsCallbacks, registerUIScriptFuncsCallbacks);
+	CREATE_PLUGIN_CALLBACK(OnServerFrameFn, void(*)(CServer*), GetServerFrameCallbacks, serverFrameCallbacks);
 
 #undef CREATE_PLUGIN_CALLBACK
 

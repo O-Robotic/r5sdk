@@ -2,6 +2,8 @@
 
 #define INTERFACEVERSION_PLUGINSYSTEM "VPluginSystem002"
 
+class CServer;
+
 struct PluginOperation_s
 {
 	enum class PluginCommand_e : int16_t
@@ -23,6 +25,7 @@ struct PluginOperation_s
 		OnRegisterServerScriptFunctions = 5,
 		OnRegisterClientScriptFunctions = 6,
 		OnRegisterUIScriptFunctions     = 7,
+		CServer_RunFrame                = 8,
 	};
 
 	PluginCommand_e commandId;

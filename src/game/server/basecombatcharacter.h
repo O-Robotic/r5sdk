@@ -1,4 +1,4 @@
-﻿//===== Copyright © 1996-2005, Valve Corporation, All rights reserved. ======//
+//===== Copyright © 1996-2005, Valve Corporation, All rights reserved. ======//
 //
 // Purpose: Base combat character with no AI
 //
@@ -49,6 +49,11 @@ public:
 	// Nav hull type
 	Hull_e  GetHullType() const          { return m_eHull; }
 	void    SetHullType(Hull_e hullType) { m_eHull = hullType; }
+
+	const WeaponInventory& GetWeaponInventory() const { return m_inventory; }
+	const EHANDLE* GetLatestPrimaryWeapons() const { return m_latestPrimaryWeapons; }
+	const EHANDLE* GetLatest3pWeapons() const { return m_latest3pWeaponGettingEquipped; }
+	const EHANDLE* GetSwitchingWeapons() const { return m_weaponGettingSwitchedOut; }
 
 private:
 	bool m_bPreventWeaponPickup;

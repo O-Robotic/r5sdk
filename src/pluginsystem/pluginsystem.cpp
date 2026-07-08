@@ -246,6 +246,11 @@ void CPluginSystem::InstallCallback(PluginOperation_s* const pio)
 		ADD_PLUGIN_CALLBACK(OnRegisterUIScriptFunctionsFn, GetRegisterUIScriptFuncsCallbacks(), pio->function);
 		break;
 	}
+	case PluginOperation_s::PluginCallback_e::CServer_RunFrame:
+	{
+		ADD_PLUGIN_CALLBACK(OnServerFrameFn, GetServerFrameCallbacks(), pio->function);
+		break;
+	}
 	default:
 		Assert(0); // Unimplemented.
 		break;
@@ -305,6 +310,11 @@ void CPluginSystem::RemoveCallback(PluginOperation_s* const pio)
 	case PluginOperation_s::PluginCallback_e::OnRegisterUIScriptFunctions:
 	{
 		REMOVE_PLUGIN_CALLBACK(OnRegisterUIScriptFunctionsFn, GetRegisterUIScriptFuncsCallbacks(), pio->function);
+		break;
+	}
+	case PluginOperation_s::PluginCallback_e::CServer_RunFrame:
+	{
+		REMOVE_PLUGIN_CALLBACK(OnServerFrameFn, GetServerFrameCallbacks(), pio->function);
 		break;
 	}
 	default:

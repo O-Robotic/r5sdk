@@ -117,13 +117,19 @@ public:
 	const CServerNetworkProperty* NetworkProp() const;
 
 	model_t*		GetModel(void);
-	int				GetModelIndex(void) const; // Virtual in-engine!
-	string_t		GetModelName(void) const;  // Virtual in-engine!
+	inline int		GetModelIndex(void) const { return m_nModelIndex; } // Virtual in-engine!
+	inline string_t	GetModelName(void) const { return m_ModelName; }
 	const Vector3D& GetViewOffset(void) const { return m_vecViewOffset; }
+	const Vector3D& GetAbsOrigin(void) const { return m_vecAbsOrigin; }
+	const Vector3D& GetAbsVelocity(void) const { return m_vecAbsVelocity; }
 	const Vector3D& GetVecPrevAbsOrigin(void) const { return m_vecPrevAbsOrigin; }
 
 	inline edict_t GetEdict(void) const { return NetworkProp()->GetEdict(); }
 	inline string_t GetEntityName(void) const { return m_iName; }
+	inline const EHANDLE& GetMoveParentHandle(void) const { return m_hMoveParent; }
+	inline const EHANDLE& GetMoveChildHandle(void) const { return m_hMoveChild; }
+	inline const EHANDLE& GetMovePeerHandle(void) const { return m_hMovePeer; }
+	inline const EHANDLE& GetOwnerEntityHandle(void) const { return m_hOwnerEntity; }
 
 	inline int		GetFlags(void) const { return m_fFlags; }
 
