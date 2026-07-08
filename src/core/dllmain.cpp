@@ -107,6 +107,17 @@ void SDK_Init()
 
     SetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling, &PowerThrottlingState, sizeof(PowerThrottlingState));
 
+    // Completely disallow image loading from remote locations. There is no scenario that I can think of where this is needed
+    // for the average user.
+    PROCESS_MITIGATION_IMAGE_LOAD_POLICY ImageLoadPolicy = {};
+    ImageLoadPolicy.NoRemoteImages = 1;
+
+    if (!SetProcessMitigationPolicy(ProcessImageLoadPolicy, &ImageLoadPolicy, sizeof(ImageLoadPolicy)))
+    {
+        spdlog::warn("Failed to enable 'NoRemoteImages' image load mitigation: {:s}\n",
+            std::system_category().message(static_cast<int>(::GetLastError())).c_str());
+    }
+
     // Set after checking cpu and initializing MathLib since we check CPU
     // features there. Else we crash on the recursive initialization error as
     // SpdLog uses SSE features.
