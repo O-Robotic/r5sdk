@@ -41,7 +41,7 @@ jobs:
               run: cmake -B ${{github.workspace}}/build_intermediate -DOPTION_CERTAIN=ON -DOPTION_RETAIL=ON -DOPTION_LTCG_MODE=ALL
 
             - name: Build solution
-              run: msbuild ${{github.workspace}}/build_intermediate/r5sdk.sln /p:configuration=Release
+              run: msbuild ${{github.workspace}}/build_intermediate/r5sdk.slnx /p:configuration=Release
 
             - name: Package release
               shell: pwsh
