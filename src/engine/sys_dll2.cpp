@@ -29,29 +29,6 @@
 constexpr char DFS_ENABLE_PATH[] = "/vpk/enable.txt";
 
 //-----------------------------------------------------------------------------
-// Figure out if we're running a Valve mod or not.
-//-----------------------------------------------------------------------------
-static bool IsValveMod(const char* pModName)
-{
-	return (Q_stricmp(pModName, "cstrike") == 0 ||
-		Q_stricmp(pModName, "dod") == 0 ||
-		Q_stricmp(pModName, "hl1mp") == 0 ||
-		Q_stricmp(pModName, "tf") == 0 ||
-		Q_stricmp(pModName, "hl2mp") == 0 ||
-		Q_stricmp(pModName, "csgo") == 0);
-}
-
-//-----------------------------------------------------------------------------
-// Figure out if we're running a Respawn mod or not.
-//-----------------------------------------------------------------------------
-static bool IsRespawnMod(const char* pModName)
-{
-	return (Q_stricmp(pModName, "r1") == 0 ||
-		Q_stricmp(pModName, "r2") == 0 ||
-		Q_stricmp(pModName, "r5") == 0);
-}
-
-//-----------------------------------------------------------------------------
 // Initialize the VPK and file cache system
 //-----------------------------------------------------------------------------
 static void InitVPKSystem()
@@ -98,13 +75,11 @@ bool CEngineAPI::VModInit(CEngineAPI* pEngineAPI, const char* pModName, const ch
     //RTech_RegisterAsset(0, 1, "", nullptr, nullptr, nullptr, CMemory(0x1660AD0A8).RCast<void**>(), 8, 8, 8, 0, 0xFFFFFFC);
 
 	const bool results = CEngineAPI__ModInit(pEngineAPI, pModName, pGameDir);
-	if (!IsValveMod(pModName) && !IsRespawnMod(pModName))
-	{
+
 #ifndef DEDICATED
-		g_pEngineClient->SetRestrictServerCommands(true); // Restrict server commands.
-		g_pEngineClient->SetRestrictClientCommands(true); // Restrict client commands.
+    g_pEngineClient->SetRestrictServerCommands(true); // Restrict server commands.
+    g_pEngineClient->SetRestrictClientCommands(true); // Restrict client commands.
 #endif // !DEDICATED
-	}
 
 	return results;
 }
