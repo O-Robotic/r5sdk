@@ -160,7 +160,7 @@ ScriptStatus_t CSquirrelVM::ExecuteFunction(HSCRIPT hFunction, const ScriptVaria
 	// Only bother doing a timer if the funcproto is not nullptr.
 	// This should always be true unless something has gone badly wrong.
 	const bool hasFuncProto = fp != nullptr;
-	const char* functionName = hasFuncProto ? _stringval(fp->_funcname) : "(no funcproto)";
+	const char* functionName = hasFuncProto ? _stringval(fp->_name) : "(no funcproto)";
 
 	Assert(hasFuncProto);
 	CFastTimer callTimer;

@@ -8,9 +8,15 @@
 #include "tier0/fasttimer.h"
 #include "tier1/cvar.h"
 #include "languages/squirrel_re/vsquirrel.h"
+#include "languages/squirrel_re/include/squirrel.h"
 #include "vscript/vscript.h"
 #include "game/shared/vscript_shared.h"
 #include "pluginsystem/modsystem.h"
+#include "languages/squirrel_re/include/sqtable.h"
+#include "languages/squirrel_re/include/sqfuncproto.h"
+#include "languages/squirrel_re/include/sqarray.h"
+#include "languages/squirrel_re/include/sqclosure.h"
+#include "tier1/fmtstr.h"
 
 static const char* s_scriptContextNames[] = { "SERVER", "CLIENT", "UI" };
 
@@ -71,6 +77,155 @@ RSON::Node_t* Script_LoadScriptList(const SQChar* rsonfile)
 	return v_Script_LoadScriptList(rsonfile);
 }
 
+CUtlString sq_printobjvalue(SQObjectPtr* obj)
+{
+	CUtlString string;
+
+
+    switch ( obj->_type )
+	{
+	case OT_NULL:
+	{
+		string = "null";
+		break;
+	}
+	case OT_INTEGER:
+	{
+		string.Format( "%d", _integer( *obj ) );
+		break;
+	}
+	case OT_FLOAT:
+	{
+		string.Format( "%f", _float( *obj ) );
+		break;
+	}
+	case OT_BOOL:
+	{
+		string = _bool( *obj ) ? "true" : "false";
+		break;
+	}
+	case OT_STRING:
+	{
+		string = _stringval( *obj );
+		break;
+	}
+	case OT_TABLE:
+	{
+		SQTable* pTable = _table( *obj );
+
+		string.Append( "--Table Start--\n" );
+
+		SQ_FOR_EACH_TABLE( pTable, tableIt )
+		{
+			auto&			 hashNode = pTable->_nodes[tableIt];
+
+            if ( hashNode.key._type == OT_NULL && hashNode.val._type == OT_NULL )
+				continue;
+
+			const CUtlString key	  = sq_printobjvalue( &hashNode.key );
+			const CUtlString val	  = sq_printobjvalue( &hashNode.val );
+
+			string.Append( Format( "%s: %s\n", key.String(), val.String() ).c_str() );
+		}
+
+		string.Append( "--Table Start--" );
+		break;
+	}
+	case OT_ARRAY:
+	{
+		SQArray* pArray = _array( *obj );
+
+		string.Append( "--Array Start--\n" );
+
+		for ( int i = 0; i < pArray->Size(); i++ )
+		{
+			SQObjectPtr& obj = pArray->_values[i];
+			string.Append( sq_printobjvalue( &obj ) );
+			string.Append( '\n' );
+		}
+
+		string.Append( "--Array End--" );
+		break;
+	}
+	case OT_USERDATA:
+	{
+		string = "userdata";
+		break;
+	}
+	case OT_CLOSURE:
+	{
+		SQClosure* pClosure = _closure( *obj );
+
+        string.Append( "--Closure Start--\n" );
+        string.Append( Format("Function: %s\n", sq_printobjvalue( &pClosure->_function ).String()).c_str());
+		string.Append( "--Closure End--" );
+		break;
+	}
+	case OT_NATIVECLOSURE:
+    {
+		SQNativeClosure* pNativeClosure = _nativeclosure( *obj );
+        string.Append( "--NativeClosure Start--\n" );
+
+        string.Append( "_nparamscheck: " );
+		string.Append( pNativeClosure->_nparamscheck ? "true" : "false" );
+		string.Append( "\n" );
+
+        string.Append( Format("Name: %s\n", sq_printobjvalue( &pNativeClosure->_name ).String() ).c_str());
+        string.Append( Format("Func Addr: 0x%x\n", pNativeClosure->_function ).c_str());
+
+        string.Append( "--NativeClosure End--" );
+		break;
+    }
+	case OT_FUNCPROTO:
+    {
+		SQFunctionProto* pFuncProto = _funcproto( *obj );
+
+        string.Append( "--FuncProto Start--\n" );
+
+        CUtlString sourceName = sq_printobjvalue( &pFuncProto->_sourcename );
+		CUtlString name		  = sq_printobjvalue( &pFuncProto->_name );
+
+        string.Append( Format( "Source Name: %s\n", sourceName.String() ).c_str());
+		string.Append( Format( "Name: %s\n", name.String() ).c_str() );
+
+        string.Append( "--FuncProto End--" );
+		break;
+    }
+	case OT_UNIMPLEMENTED:
+    {
+		SQFunctionProtoUnimplemented* pUnImplFunc = _unimplemented( *obj );
+
+        string.Append( "--UnimplFunc Start--\n" );
+
+        CUtlString sourceName = sq_printobjvalue( &pUnImplFunc->_sourcename );
+		SQInteger  lineNum	  = pUnImplFunc->_linenum;
+
+        string.Append( Format( "SourceName %s\nLineNum: %d\n", sourceName.String(), lineNum ).c_str() );
+
+        string.Append( "--UnimplFunc End--" );
+		break;
+    }
+	case OT_STRUCTDEF:
+    {
+		SQStructDef* pStructDef = (SQStructDef*)obj->_unVal.pUserPointer;
+
+        CUtlString name = sq_printobjvalue( &pStructDef->_name );
+        
+        string.Append( "--StructDef Start--\n" );
+
+        string.Append( Format( "Name %s\nHashVal %d\n", name.String(), pStructDef->_HashValMaybe ).c_str() );
+
+        string.Append( "--StructDef End--" );
+        break;
+    }
+    default: 
+        string.Append(Format("Unhandled Type %s", IdType2Name(obj->_type)).c_str());
+        break;
+    }
+
+    return string;
+}
+
 //---------------------------------------------------------------------------------
 // Purpose: loads script files listed in the script list, to be compiled.
 // Input  : *s - 
@@ -81,7 +236,113 @@ RSON::Node_t* Script_LoadScriptList(const SQChar* rsonfile)
 SQBool Script_LoadScriptFile(CSquirrelVM* const s, const SQChar* path, const SQChar* name, SQInteger flags)
 {
 	///////////////////////////////////////////////////////////////////////////////
-	return v_Script_LoadScriptFile(s, path, name, flags);
+	SQBool bRes = v_Script_LoadScriptFile(s, path, name, flags);
+
+
+    SQSharedState* pSharedState = s->GetVM()->_sharedstate;
+	(void)pSharedState;
+
+    auto& unkVec = pSharedState->m_unkVecOfSQSharedState_scope_state_maybe;
+
+
+    for (unsigned int i = 0; i < unkVec.size(); i++)
+    {
+        SQSharedState_scope_state_maybe* scopeState = &unkVec[i];
+		
+        
+        SQTable* pConstValuesTable = _table( scopeState->_ConstTable );
+		SQTable* pConstUserDataTable = _table( scopeState->_ConstTableUserDatas );
+
+        SQTable* pFileLevelDefsMaybe = _table( scopeState->_fileLocalVarNameKeysWithStrangeIndexVal );
+		SQTable* pFunctionHolders	 = _table( scopeState->_fileFunctionsTable );
+
+        SQTable* pStructDefs = _table( scopeState->_fileStructDefs );
+		SQTable* pTypedefs	 = _table( scopeState->_typeDefs );
+
+        SQTable* pUnkStructDefTable = _table( scopeState->_inlineStructs );
+
+        
+        //Msg( eDLL_T::ENGINE, "------ConstValuesTable Start------\n" );
+		//Msg( eDLL_T::ENGINE, "%s\n", sq_printobjvalue( &scopeState->_ConstTable ).String() );
+        //Msg( eDLL_T::ENGINE, "------ConstValuesTable End------\n" );
+        
+
+        //Msg( eDLL_T::ENGINE, "------ConstUserDataTable Start------\n" );
+		//Msg( eDLL_T::ENGINE, "%s\n", sq_printobjvalue( &scopeState->_ConstTableUserDatas ).String() );
+		//Msg( eDLL_T::ENGINE, "------ConstUserDataTable End------\n" );
+        
+        //Msg( eDLL_T::ENGINE, "------StructDefs Start------\n" );
+		//Msg( eDLL_T::ENGINE, "%s\n", sq_printobjvalue( &scopeState->_fileStructDefs ).String() );
+		//Msg( eDLL_T::ENGINE, "------StructDefs End------\n" );
+
+
+        //Msg( eDLL_T::ENGINE, "------Typedefs Start------\n" );
+		//Msg( eDLL_T::ENGINE, "%s\n", sq_printobjvalue( &scopeState->_typeDefs ).String() );
+		//Msg( eDLL_T::ENGINE, "------Typedefs End------\n" );
+
+        Msg( eDLL_T::ENGINE, "------unkStructDefTable Start------\n" );
+		Msg( eDLL_T::ENGINE, "%s\n", sq_printobjvalue( &scopeState->_inlineStructs ).String() );
+		Msg( eDLL_T::ENGINE, "------unkStructDefTable End------\n" );
+
+        /*
+        Msg( eDLL_T::ENGINE, "------FileLevelDefsMaybe Start------\n" );
+		SQ_FOR_EACH_TABLE( pFileLevelDefsMaybe, iTableItr )
+		{
+			auto& node = pFileLevelDefsMaybe->_nodes[iTableItr];
+
+			if ( node.key._type == OT_NULL && node.val._type == OT_NULL )
+				continue;
+
+			if ( node.key._type != OT_STRING || node.val._type != OT_INTEGER )
+				Assert( 0 );
+
+			Msg( eDLL_T::ENGINE, "Key: %s Value %d\n", _stringval( node.key ), _integer(node.val) );
+		}
+		Msg( eDLL_T::ENGINE, "------FileLevelDefsMaybe End------\n" );
+        */
+
+        
+        //Msg( eDLL_T::ENGINE, "------FunctionHolders Start------\n" );
+		//Msg( eDLL_T::ENGINE, "%s\n", sq_printobjvalue( &scopeState->_fileFunctionsTable ).String() );
+        /*
+        SQ_FOR_EACH_TABLE( pFunctionHolders, iTableItr )
+		{
+			auto& node = pFunctionHolders->_nodes[iTableItr];
+
+			if ( node.key._type == OT_NULL && node.val._type == OT_NULL )
+				continue;
+
+			if ( node.key._type != OT_STRING )
+				Assert( 0 );
+
+            if ( node.val._type == OT_UNIMPLEMENTED )
+			{
+				SQFunctionProtoUnimplemented* unimplFunc = (SQFunctionProtoUnimplemented*)node.val._unVal.pFunctionProto;
+				Msg( eDLL_T::ENGINE, "Impl Key: %s SourceName %s LineNum %d\n", _stringval( node.key ), _string(unimplFunc->_sourcename), unimplFunc->_linenum );
+            }
+			else if ( node.val._type == OT_FUNCPROTO )
+			{
+				SQFunctionProto* funcProto = (SQFunctionProto*)node.val._unVal.pFunctionProto;
+				Msg( eDLL_T::ENGINE, "Unimpl Key: %s SourceName %s LineNum %d\n", _stringval( node.key ), _stringval(funcProto->_sourcename), funcProto->_lineNum);
+            }
+			else
+				Assert( 0 );
+		}
+        */
+
+		//Msg( eDLL_T::ENGINE, "------FunctionHolders End------\n" );
+
+
+
+
+
+
+
+        
+    }
+
+
+    return bRes;
 }
 
 //---------------------------------------------------------------------------------

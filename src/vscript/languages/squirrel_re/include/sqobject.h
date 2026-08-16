@@ -89,6 +89,7 @@ struct SQWeakRef : SQRefCounted
 #define _weakref(obj) ((obj)._unVal.pWeakRef)
 #define _refcounted(obj) ((obj)._unVal.pRefCounted)
 #define _rawval(obj) ((obj)._unVal.raw)
+#define _unimplemented( obj ) ( ( obj )._unVal.pUnimplementedFunction )
 
 #define _vector(obj) ((SQVector3D*)&(obj)._pad)
 
