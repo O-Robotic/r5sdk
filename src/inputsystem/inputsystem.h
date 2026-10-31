@@ -4,6 +4,8 @@
 #include "tier1/utlstringmap.h"
 #include <Xinput.h>
 
+inline void* g_pCInputSystem_VFTable = nullptr;
+
 //-----------------------------------------------------------------------------
 // Implementation of the input system
 //-----------------------------------------------------------------------------
@@ -280,9 +282,6 @@ class VInputSystem : public IDetour
 
         Module_FindPattern( g_GameDll, "48 83 EC ?? 48 89 5C 24 ?? 48 8D 99" ).GetPtr( CInputSystem__Shutdown );
 		Module_FindPattern( g_GameDll, "88 51 1C" ).GetPtr( CInputSystem__SetMouseCursorVisible );
-		Module_FindPattern( g_GameDll,
-							"48 8B 05 ?? ?? ?? ?? 48 8D 0D ?? ?? ?? ?? 48 85 C0 48 0F 45 C8 FF 05 ?? ?? ?? ?? 48 89 0D ?? ?? ?? ?? B0" )
-			.GetPtr( CInputSystem__Connect );
 
         g_GameDll.GetImportedSymbol( "user32.dll", "SetCursor", false ).GetPtr( v_SetCursor );
 		
@@ -301,7 +300,10 @@ class VInputSystem : public IDetour
 
         Module_FindPattern( g_GameDll, "48 89 05 ?? ?? ?? ?? 75 ?? B9" ).ResolveRelativeAddressSelf(0x3, 0x7).GetPtr( g_phCurrentForegroundWindow );
 	}
-	virtual void GetCon(void) const { }
+    virtual void GetCon(void) const
+    {
+        g_pCInputSystem_VFTable = g_GameDll.GetVirtualMethodTable(".?AVCInputSystem@@");
+    }
 	virtual void Detour(const bool bAttach) const;
 };
 ///////////////////////////////////////////////////////////////////////////////

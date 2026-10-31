@@ -305,6 +305,11 @@ void CInputSystem__SetMouseCursorVisibleHk(CInputSystem* thisp, bool bVisible)
 
 void VInputSystem::Detour(const bool bAttach) const
 {
+    if (bAttach)
+    {
+        CMemory::HookVirtualMethod((uintptr_t)g_pCInputSystem_VFTable, CInputSystem::Connect_, 1, (LPVOID*)&CInputSystem__Connect);
+    }
+
     DetourSetup( &CInputSystem__Connect, &CInputSystem::Connect_, bAttach );
 	DetourSetup( &CInputSystem__WindowProc, &CInputSystem::WindowProc, bAttach);
 	DetourSetup( &CInputSystem__GetRawMouseAccumulators, &CInputSystem::GetRawMouseAccumulators_, bAttach );
