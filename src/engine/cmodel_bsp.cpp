@@ -913,7 +913,7 @@ static void Mod_LoadAndUnloadPaksWithLock()
             && !JT_HelpWithJobTypes(g_pPakFifoLockWrapper, pakFifoLock, -1, 0))
         {
             // Help with other jobs until we can acquire the lock.
-            JT_HelpWithJobTypesOrSleep(g_pPakFifoLockWrapper, pakFifoLock, -1, 0, 0, 1);
+			JT_HelpWithJobTypesOrSleep( g_pPakFifoLockWrapper, pakFifoLock, uint64_t(-1), 0, 0, 1 );
         }
 
         v_Mod_UnloadPendingAndPrecacheRequestedPaks();

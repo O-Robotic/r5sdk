@@ -34,7 +34,7 @@ add_sources( SOURCE_GROUP "Core"
 )
 
 target_link_libraries( ${PROJECT_NAME} PRIVATE
-    "advapi32.lib"
+    "Synchronization.lib"
     "bcrypt.lib"
     "crypt32.lib"
     "dbghelp.lib"

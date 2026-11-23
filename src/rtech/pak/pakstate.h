@@ -163,7 +163,7 @@ struct PakLoadFuncs_s
 inline PakGlobalState_s* g_pakGlobals;
 extern PakLoadFuncs_s* g_pakLoadApi;
 
-inline JobHelpCallback_t g_pPakFifoLockWrapper; // Pointer to functor that takes the global pak fifolock as argument.
+inline JobStopCallback_t g_pPakFifoLockWrapper; // Pointer to functor that takes the global pak fifolock as argument.
 
 // if this is set, JT_ReleaseFifoLock has to be called
 // twice as the depth goes up to the thread that
@@ -189,7 +189,7 @@ class V_PakState : public IDetour
 
 		const CMemory jtBase(JT_HelpWithAnything);
 
-		g_pPakFifoLockWrapper = jtBase.Offset(0x1BC).FindPatternSelf("48 8D 0D").ResolveRelativeAddressSelf(0x3, 0x7).RCast<JobHelpCallback_t>();
+		jtBase.Offset(0x1BC).FindPatternSelf("48 8D 0D").ResolveRelativeAddressSelf(0x3, 0x7).GetPtr(g_pPakFifoLockWrapper);
 		g_bPakFifoLockAcquiredInMainThread = jtBase.Offset(0x50).FindPatternSelf("C6 05").ResolveRelativeAddressSelf(0x2, 0x7).RCast<bool*>();
 	}
 	virtual void GetCon(void) const { }
