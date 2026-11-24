@@ -35,7 +35,6 @@ add_sources( SOURCE_GROUP "Core"
 )
 
 target_link_libraries( ${PROJECT_NAME} PRIVATE
-	"Synchronization.lib"
     "bcrypt.lib"
     "crypt32.lib"
     "dbghelp.lib"

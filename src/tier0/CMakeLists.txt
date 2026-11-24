@@ -48,6 +48,10 @@ add_sources( SOURCE_GROUP "Runtime"
     "binstream.cpp"
 )
 
+target_link_libraries( ${PROJECT_NAME} PRIVATE
+	"Synchronization.lib"
+)
+
 file( GLOB TIER0_PUBLIC_HEADERS
     "${ENGINE_SOURCE_DIR}/public/tier0/*"
 )
