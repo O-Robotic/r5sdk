@@ -323,6 +323,8 @@ void Systems_Shutdown()
 	LiveAPISystem()->Shutdown();
 #endif// !CLIENT_DLL
 
+    JT_Shutdown();
+
 	CFastTimer shutdownTimer;
 	shutdownTimer.Start();
 

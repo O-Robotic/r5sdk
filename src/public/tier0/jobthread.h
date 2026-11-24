@@ -2,6 +2,7 @@
 #define JOBTHREAD_H
 
 #define JT_JOB_GROUP_BASE_ID 0x3000
+#define JT_EXTERNAL_THREAD_COUNT 2
 
 #define JT_THREAD_SLOTS 28
 #define JT_WAIT_ARMED 0xAA
@@ -150,7 +151,7 @@ struct JobSystem_t
 	uint8_t			   m_gap039[7];
 	uint64_t		   m_SlotPoolCursor;
 	uint8_t			   m_gap048[40];
-	void			  *m_pfnThreadIDAllocFunc;
+	void			  (*m_pfnThreadIDAllocFunc)();
 	uint64_t		   m_ParkedThreadMask;
 	JobParkPredicate_t m_ParkedPredicates[JT_THREAD_SLOTS];
 	uint8_t			   m_gap240[64];
@@ -192,18 +193,27 @@ inline JobContext_s* job_JT_Context = nullptr;
 inline JobSystem_t*	 g_pJobSystem;
 inline IdleCallback *g_pJT_IdleCallbacks;
 inline JT_ThreadState_t *g_JT_ThreadStates;
+inline HANDLE*			 g_JTWorkerThreadHandles;
+inline uint64_t			*g_JTWorkerThreadStackBases;
+inline uint64_t			*g_JTWorkerThreadStackSizes;
+inline uint64_t			*g_pJTWorkerThreadDefaultStackSize;
 
 // low 32 bits are a thread bit mask
 // high 32 is a wake epoch
 inline volatile LONG64 *g_pJT_ThreadParkState;
+inline volatile LONG	g_bJT_ShutdownRequested;
 
 extern bool JT_IsJobDone(const JobID_t jobId);
 extern JobID_t JTGuts_AddJob(JobTypeID_t jobTypeId, JobID_t jobId, void* callbackFunc, void* callbackArg);
 extern JobID_t JT_GetCurrentJob();
 
-void JT_HelpWithJobTypesOrSleep( JobStopCallback_t pfnStop, JobUserData_t userData, const __int64 preferred,
-									const __int64 permitted, volatile LONG64 *const pWaitWord, const char publish );
+void JT_HelpWithJobTypesOrSleep( JobStopCallback_t pfnStop, JobUserData_t userData, const __int64 preferredJobMask,
+									const __int64 permittedJobMask, volatile LONG64 *const pWaitWord, const char bPublishPredicate );
+
 void JT_WakeThreadsByMask( uint64_t mask );
+
+DWORD WINAPI JT_WorkerThreadMain( LPVOID parameter );
+void JT_Shutdown();
 
 inline void(*JT_ParallelCall)(void);
 inline void*(*JT_HelpWithAnything)(bool bShouldLoadPak);
@@ -225,6 +235,7 @@ inline void(*JT_EndJobGroup)(const JobID_t jobId);
 
 inline unsigned int (*JT_AllocateJob)(); // Returns an index to the 'job_JT_Context' array
 inline JobID_t(*JTGuts_AddJob_Internal)(JobTypeID_t jobTypeId, JobID_t jobId, void* callbackfunc, void* callbackArg, int jobIndex, JobContext_s* context);
+inline DWORD ( *v_JT_WorkerThreadMain )( LPVOID param );
 
 ///////////////////////////////////////////////////////////////////////////////
 class VJobThread : public IDetour
@@ -249,12 +260,17 @@ class VJobThread : public IDetour
 
 		LogFunAdr("JT_AllocateJob", JT_AllocateJob);
 		LogFunAdr("JTGuts_AddJob_Internal", JTGuts_AddJob_Internal);
+		LogFunAdr( "JT_WorkerThreadMain", v_JT_WorkerThreadMain );
 		LogVarAdr("job_JT_Context", job_JT_Context);
 		LogVarAdr("g_JobSystem", g_pJobSystem);
 		LogVarAdr("g_JT_IdleCallbacks", g_pJT_IdleCallbacks);
 		LogVarAdr( "g_JT_ThreadParkState", (void*)g_pJT_ThreadParkState );
-		LogVarAdr( "g_JT_ThreadStates", (void *)g_JT_ThreadStates );
+		LogVarAdr( "g_JT_ThreadStates", g_JT_ThreadStates );
+		LogVarAdr( "g_JTWorkerThreadHandles", g_JTWorkerThreadHandles );
 		LogVarAdr( "g_JTWorkerThreadControlInfos", g_JTWorkerThreadControlInfos );
+		LogVarAdr( "g_JTWorkerThreadStackBases", g_JTWorkerThreadStackBases );
+		LogVarAdr( "g_JTWorkerThreadStackSizes", g_JTWorkerThreadStackSizes );
+		LogVarAdr( "g_pJTWorkerThreadDefaultStackSize", g_pJTWorkerThreadDefaultStackSize );
 
 	}
 	virtual void GetFun(void) const
@@ -273,6 +289,7 @@ class VJobThread : public IDetour
 
         Module_FindPattern( g_GameDll, "48 89 5C 24 ?? 56 48 83 EC ?? 48 8B D9 48 89 7C 24" ).GetPtr( v_JT_WakeThreadsByMask );
 		Module_FindPattern( g_GameDll, "40 53 48 83 EC ?? 41 BB ?? ?? ?? ?? 4C 8B D2" ).GetPtr( JT_WakeWorkersForJob );
+		Module_FindPattern( g_GameDll, "40 53 48 83 EC ?? 8B C1 4C 8D 15" ).GetPtr( v_JT_WorkerThreadMain );
 	}
 	virtual void GetVar(void) const
 	{
@@ -296,6 +313,33 @@ class VJobThread : public IDetour
 			.ResolveRelativeAddressSelf( 0x3, 0x7 )
 			.OffsetSelf( -8 )
 			.GetPtr( g_pJT_IdleCallbacks );
+
+        Module_FindPattern( g_GameDll, "40 55 56 41 56 48 81 EC ?? ?? ?? ?? 48 89 9C 24" )
+			.OffsetSelf( 0x365 )
+			.FindPatternSelf( "48 8D 0D" )
+			.ResolveRelativeAddressSelf( 0x3, 0x7 )
+			.GetPtr( g_JTWorkerThreadStackSizes );
+
+        Module_FindPattern( g_GameDll, "48 8B C4 48 89 58 ?? 48 89 78 ?? 55 48 8D 68 ?? 48 81 EC ?? ?? ?? ?? 0F 29 70 ?? 48 8D 1D" )
+			.OffsetSelf( 0x176 )
+			.FindPatternSelf( "48 89 05" )
+			.ResolveRelativeAddressSelf( 0x3, 0x7 )
+			.GetPtr( g_JTWorkerThreadStackBases );
+
+        Module_FindPattern( g_GameDll, "48 8B C4 48 89 58 ?? 48 89 70 ?? 57 41 54 41 55 41 56 41 57 48 81 EC ?? ?? ?? ?? 0F 29 70" )
+			.OffsetSelf( 0x4C5 )
+			.FindPatternSelf( "48 89 05" )
+			.ResolveRelativeAddressSelf( 0x3, 0x7 )
+			.GetPtr( g_pJTWorkerThreadDefaultStackSize );
+
+        const CMemory store = Module_FindPattern( g_GameDll,
+												  "49 89 84 CD ?? ?? ?? ?? 48 8D 4C 24 ?? 8B 07 4C 2B C0" );
+		if ( store )
+		{
+			std::int32_t disp;
+			std::memcpy( &disp, store.Offset( 4 ).RCast<const void *>(), sizeof disp );
+			CMemory( g_GameDll.GetModuleBase() ).Offset( disp ).GetPtr( g_JTWorkerThreadHandles );
+		}
 
         CMemory( v_JT_WakeThreadsByMask )
 			.FindPattern( "48 8D 35" )

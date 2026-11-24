@@ -1,6 +1,7 @@
 
 #include "engine/host_cmd.h"
 #include "tier0/jobthread.h"
+#include <materialsystem/cmatqueuedrendercontext.h>
 
 bool JT_IsJobDone(const JobID_t jobId)
 {
@@ -23,6 +24,12 @@ uint32_t JT_GetCurrentThreadID()
 {
 	return *(_DWORD *)( *(_QWORD *)CModule::GetThreadEnvironmentBlock()->ThreadLocalStoragePointer + 8 );
 }
+
+void JT_SetCurrentThreadID(uint32_t threadID)
+{
+	*(_DWORD *)( *(_QWORD *)CModule::GetThreadEnvironmentBlock()->ThreadLocalStoragePointer + 8 ) = threadID;
+}
+
 
 void JT_WakeThreadsByMask( uint64_t mask )
 {
@@ -109,14 +116,15 @@ static void JT_WaitForWork(uint32_t threadID, const DWORD timeout)
     InterlockedExchange( wakeWord, 0 );
 }
 
-void JT_HelpWithJobTypesOrSleep( JobStopCallback_t pfnStop, JobUserData_t userData, const __int64 preferredJobMask,
-									const __int64 permittedJobMask, volatile LONG64 *const pWaitWord, const char bPublishPredicate )
+void JT_HelpWithJobTypesOrSleep_Internal( JobStopCallback_t pfnStop, JobUserData_t userData, const __int64 preferredJobMask,
+										  const __int64 permittedJobMask, volatile LONG64 *const pWaitWord, const char bPublishPredicate, bool bCalledFromWorkerMain )
 {
 	const unsigned slot = JT_GetCurrentThreadID();
 	const uint64_t bit	= uint64_t{ 1 } << slot;
 
 	const auto isJobFinished = [&] { return pfnStop && pfnStop( userData ); };
 	const auto helpWithJobTypes = [&] { return JT_HelpWithJobTypes( pfnStop, userData, preferredJobMask, permittedJobMask ); };
+	const auto shouldStop = [&]{ return bCalledFromWorkerMain && ReadAcquire( &g_bJT_ShutdownRequested ); };
 
 	JT_CheckParkPredicates( slot );
 	if ( isJobFinished() || helpWithJobTypes() )
@@ -129,7 +137,7 @@ void JT_HelpWithJobTypesOrSleep( JobStopCallback_t pfnStop, JobUserData_t userDa
 	volatile LONG64* pThreadSavedParkState  = &g_JT_ThreadStates[slot].m_SavedParkState;
 	volatile LONG* pbThreadParkingDisabled  = &g_pJobSystem->m_bDisableThreadParking;
 
-	while ( !ReadAcquire( pbThreadParkingDisabled ) )
+	while ( !ReadAcquire( pbThreadParkingDisabled ) && !shouldStop() )
 	{
 		JT_CheckParkPredicates( slot );
 		if ( pWaitWord )
@@ -138,10 +146,10 @@ void JT_HelpWithJobTypesOrSleep( JobStopCallback_t pfnStop, JobUserData_t userDa
 		const uint64_t before				 = InterlockedOr64( g_pJT_ThreadParkState, bit );
 		bool		   stoppedByIdleCallback = false;
 		if ( ( ( before ^ ReadAcquire64( pThreadSavedParkState ) ) & JT_EPOCH_MASK ) == 0 && !isJobFinished() &&
-			 ( !pWaitWord || ( ReadAcquire64( pWaitWord ) & bit ) != 0 ) && !ReadAcquire( pbThreadParkingDisabled ) )
+			 ( !pWaitWord || ( ReadAcquire64( pWaitWord ) & bit ) != 0 ) && !ReadAcquire( pbThreadParkingDisabled ) && !shouldStop())
 		{
 			const auto idle = g_pJT_IdleCallbacks[slot];
-			while ( ( ReadAcquire64( g_pJT_ThreadParkState ) & bit ) != 0 && !ReadAcquire( pbThreadParkingDisabled ) )
+			while ( ( ReadAcquire64( g_pJT_ThreadParkState ) & bit ) != 0 && !ReadAcquire( pbThreadParkingDisabled ) && !shouldStop())
 			{
 				if ( idle )
 				{
@@ -164,6 +172,79 @@ void JT_HelpWithJobTypesOrSleep( JobStopCallback_t pfnStop, JobUserData_t userDa
 		JT_UnpublishPredicate( slot, previous );
 
 	return;
+}
+
+DWORD WINAPI JT_WorkerThreadMain( LPVOID parameter )
+{
+	const uint32_t threadSlot = static_cast<uint32_t>( reinterpret_cast<uintptr_t>( parameter ) );
+	JT_SetCurrentThreadID( threadSlot );
+	DWORD64 stackBase					   = CModule::GetThreadEnvironmentBlock()->NtTib.StackBase;
+	g_JTWorkerThreadStackBases[threadSlot] = stackBase;
+
+	const uint64_t nDefaultStackSize	   = *g_pJTWorkerThreadDefaultStackSize;
+	g_JTWorkerThreadStackSizes[threadSlot] = nDefaultStackSize ? nDefaultStackSize : 0x100000;
+
+	if ( g_pJobSystem->m_pfnThreadIDAllocFunc )
+		g_pJobSystem->m_pfnThreadIDAllocFunc();
+
+	JT_HelpWithJobTypesOrSleep_Internal( nullptr, nullptr, -1, 0, nullptr, 0, true );
+	JT_SetCurrentThreadID( JT_THREAD_SLOTS );
+	return 0;
+}
+
+void JT_HelpWithJobTypesOrSleep(JobStopCallback_t pfnStop, JobUserData_t userData, const __int64 preferredJobMask,
+    const __int64 permittedJobMask, volatile LONG64* const pWaitWord, const char bPublishPredicate)
+{
+	JT_HelpWithJobTypesOrSleep_Internal( pfnStop, userData, preferredJobMask, permittedJobMask, pWaitWord, bPublishPredicate, false );
+}
+
+
+static void CallQueueSetQuit()
+{
+	WriteRelease( &g_CallQueues->quitFlag, 1);
+}
+
+static void CallQueueFunc( CallQueue_s *pQueue )
+{
+	void ( *cmd )() = *reinterpret_cast<void(**)()>( pQueue->GetCurrentCallItem() );
+	cmd();
+	pQueue->AdvanceReadPos( sizeof(void*) );
+}
+
+static void JT_ShutdownRenderThread()
+{
+	HANDLE hRenderThread = g_CallQueues->hRenderThread;
+	if ( !hRenderThread || ReadAcquire( &g_CallQueues->quitFlag ) )
+		return;
+
+	CallQueue_s* queue = ( *g_fnAddRenderCallQueueItem )( CallQueueFunc, sizeof(void*), 7 );
+	auto cmd = (void(**)())queue->GetCurrentAllocatedItem();
+    *cmd = CallQueueSetQuit;
+
+	( *g_fnAdvanceRenderCallQueue )( sizeof( void* ) );
+
+	const DWORD waitResult = WaitForSingleObject( hRenderThread, 10000 );
+	if ( waitResult != WAIT_OBJECT_0 )
+		DevMsg( eDLL_T::ENGINE, "Thread shutdown timed out\n" );
+
+	CloseHandle( hRenderThread );
+}
+
+void JT_Shutdown()
+{
+	JT_ShutdownRenderThread();
+
+    const uint32_t workerThreadCount = g_pJobSystem->m_NextWorkerThreadSlot;
+	InterlockedExchange( &g_bJT_ShutdownRequested, 1 );
+    const uint64_t workerThreadMask = ( ( 1llu << workerThreadCount ) - 1 );
+	const uint64_t wakeMask			= workerThreadMask << JT_EXTERNAL_THREAD_COUNT;
+
+	InterlockedAnd64( g_pJT_ThreadParkState, ~wakeMask );
+	JT_WakeThreadsByMask( wakeMask );
+
+    WaitForMultipleObjects( workerThreadCount, g_JTWorkerThreadHandles, TRUE, 10000 );
+	for ( size_t i = 0; i < workerThreadCount; i++ )
+		CloseHandle( g_JTWorkerThreadHandles[i] );
 }
 
 //-----------------------------------------------------------------------------

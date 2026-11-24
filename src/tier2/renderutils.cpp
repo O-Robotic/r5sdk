@@ -111,7 +111,7 @@ static void RenderLineQueueFunctor(CallQueue_s* const queue)
     item->function(item->v1, item->v2, item->color, item->material);
 
     // Advance the queue.
-    queue->currentCallIndex += sizeof(RenderLineQueue_s);
+	queue->AdvanceReadPos(sizeof( RenderLineQueue_s ));
 }
 
 //-----------------------------------------------------------------------------
@@ -221,7 +221,7 @@ static void RenderBoxQueueFunctor(CallQueue_s* const queue)
     item->function(item->fTransformMatrix, item->vMins, item->vMaxs, item->color, item->material, item->bInsideOut);
 
     // Advance the queue.
-    queue->currentCallIndex += sizeof(RenderBoxQueue_s);
+    queue->AdvanceReadPos(sizeof(RenderBoxQueue_s));
 }
 
 //-----------------------------------------------------------------------------
@@ -312,7 +312,7 @@ static void RenderWireframeBoxQueueFunctor(CallQueue_s* const queue)
     item->function(item->fTransformMatrix, item->vMins, item->vMaxs, item->color, item->material);
 
     // Advance the queue.
-    queue->currentCallIndex += sizeof(RenderWireframeBoxQueue_s);
+    queue->AdvanceReadPos(sizeof(RenderWireframeBoxQueue_s));
 }
 
 //-----------------------------------------------------------------------------
@@ -457,7 +457,7 @@ static void RenderSweptBoxQueueFunctor(CallQueue_s* const queue)
     item->function(item->vStart, item->vEnd, item->angles, item->vMins, item->vMaxs, item->color, item->pMaterial);
 
     // Advance the queue.
-    queue->currentCallIndex += sizeof(RenderSweptBoxQueue_s);
+    queue->AdvanceReadPos(sizeof(RenderSweptBoxQueue_s));
 }
 
 //-----------------------------------------------------------------------------
@@ -591,7 +591,7 @@ static void RenderTriangleQueueFunctor(CallQueue_s* const queue)
     item->function(item->p1, item->p2, item->p3, item->color, item->material);
 
     // Advance the queue.
-    queue->currentCallIndex += sizeof(RenderTriangleQueue_s);
+    queue->AdvanceReadPos(sizeof(RenderTriangleQueue_s));
 }
 
 //-----------------------------------------------------------------------------
@@ -668,7 +668,7 @@ static void RenderSphereQueueFunctor(CallQueue_s* const queue)
     item->function(item->vCenter, item->flRadius, item->nTheta, item->nPhi, item->color, item->pMaterial);
 
     // Advance the queue.
-    queue->currentCallIndex += sizeof(RenderSphereQueue_s);
+    queue->AdvanceReadPos(sizeof(RenderSphereQueue_s));
 }
 
 //-----------------------------------------------------------------------------
@@ -814,7 +814,7 @@ static void RenderCapsuleQueueFunctor(CallQueue_s* const queue)
     item->function(item->vStart, item->vEnd, item->flRadius, item->color, item->material);
 
     // Advance the queue.
-    queue->currentCallIndex += sizeof(RenderCapsuleQueue_s);
+    queue->AdvanceReadPos(sizeof(RenderCapsuleQueue_s));
 }
 
 //-----------------------------------------------------------------------------
