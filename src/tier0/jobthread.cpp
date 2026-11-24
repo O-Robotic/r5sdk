@@ -2,8 +2,6 @@
 #include "engine/host_cmd.h"
 #include "tier0/jobthread.h"
 
-static bool bUseWaitOnAddress = true;
-
 bool JT_IsJobDone(const JobID_t jobId)
 {
 	return (job_JT_Context[jobId & 0xFFF].field_24 ^ jobId) & 0xFFFFC000;
@@ -34,19 +32,9 @@ static void JT_WakeThreadsByMask( uint64_t mask )
 		_BitScanForward64( &bitIdx, mask );
 		mask &= mask - 1;
 		
-        if (bUseWaitOnAddress)
-        {
-			volatile LONG *const pWakeWork = &s_WakeWords[bitIdx].word;
-			if ( InterlockedExchange( pWakeWork, JT_WAIT_NOTIFIED ) == JT_WAIT_ARMED )
-				WakeByAddressSingle( (PVOID *)pWakeWork );
-        }
-        else
-        {
-			JT_WorkerThreadControlInfo_t &control_Info = g_JTWorkerThreadControlInfos[bitIdx];
-			AcquireSRWLockExclusive( &control_Info.m_Lock );
-			WakeConditionVariable( &control_Info.m_ConditionalVariable );
-            ReleaseSRWLockExclusive( &control_Info.m_Lock );
-        }  
+        volatile LONG *const pWakeWork = &s_WakeWords[bitIdx].word;
+		if ( InterlockedExchange( pWakeWork, JT_WAIT_NOTIFIED ) == JT_WAIT_ARMED )
+			WakeByAddressSingle( (PVOID *)pWakeWork );
     }
 }
 
@@ -118,8 +106,7 @@ static void JT_WaitForWork(uint32_t threadID, const DWORD timeout)
         break;
     }
 
-    if ( bUseWaitOnAddress )
-        InterlockedExchange( wakeWord, 0 );
+    InterlockedExchange( wakeWord, 0 );
 }
 
 void JT_HelpWithJobTypesOrSleep( JobStopCallback_t pfnStop, JobUserData_t userData, const __int64 preferredJobMask,
@@ -128,11 +115,11 @@ void JT_HelpWithJobTypesOrSleep( JobStopCallback_t pfnStop, JobUserData_t userDa
 	const unsigned slot = JT_GetCurrentThreadID();
 	const uint64_t bit	= uint64_t{ 1 } << slot;
 
-	const auto jobDone = [&] { return pfnStop && pfnStop( userData ); };
+	const auto isJobFinished = [&] { return pfnStop && pfnStop( userData ); };
 	const auto helpWithJobTypes = [&] { return JT_HelpWithJobTypes( pfnStop, userData, preferredJobMask, permittedJobMask ); };
 
 	JT_CheckParkPredicates( slot );
-	if ( jobDone() || helpWithJobTypes() )
+	if ( isJobFinished() || helpWithJobTypes() )
 		return;
 
 	JobParkPredicate_t previous{ 0, 0 };
@@ -150,7 +137,7 @@ void JT_HelpWithJobTypesOrSleep( JobStopCallback_t pfnStop, JobUserData_t userDa
 
 		const uint64_t before				 = InterlockedOr64( g_pJT_ThreadParkState, bit );
 		bool		   stoppedByIdleCallback = false;
-		if ( ( ( before ^ ReadAcquire64( pThreadSavedParkState ) ) & JT_EPOCH_MASK ) == 0 && !jobDone() &&
+		if ( ( ( before ^ ReadAcquire64( pThreadSavedParkState ) ) & JT_EPOCH_MASK ) == 0 && !isJobFinished() &&
 			 ( !pWaitWord || ( ReadAcquire64( pWaitWord ) & bit ) != 0 ) && !ReadAcquire( pbThreadParkingDisabled ) )
 		{
 			const auto idle = g_pJT_IdleCallbacks[slot];
@@ -159,8 +146,7 @@ void JT_HelpWithJobTypesOrSleep( JobStopCallback_t pfnStop, JobUserData_t userDa
 				if ( idle )
 				{
 					idle();
-					stoppedByIdleCallback = jobDone();
-					if ( stoppedByIdleCallback || ( ReadAcquire64( g_pJT_ThreadParkState ) & bit ) == 0 )
+					if ( isJobFinished() || ( ReadAcquire64( g_pJT_ThreadParkState ) & bit ) == 0 )
 						break;
 				}
 				JT_WaitForWork( slot, idle ? 1 : 100 );
@@ -170,7 +156,7 @@ void JT_HelpWithJobTypesOrSleep( JobStopCallback_t pfnStop, JobUserData_t userDa
 		if ( ReadAcquire64( g_pJT_ThreadParkState ) & bit )
 			InterlockedAnd64( g_pJT_ThreadParkState, ~bit );
 
-		if ( stoppedByIdleCallback || jobDone() || helpWithJobTypes() )
+		if ( stoppedByIdleCallback || isJobFinished() || helpWithJobTypes() )
 			break;
 	}
 
