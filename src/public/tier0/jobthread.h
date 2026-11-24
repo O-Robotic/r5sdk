@@ -203,6 +203,7 @@ extern JobID_t JT_GetCurrentJob();
 
 void JT_HelpWithJobTypesOrSleep( JobStopCallback_t pfnStop, JobUserData_t userData, const __int64 preferred,
 									const __int64 permitted, volatile LONG64 *const pWaitWord, const char publish );
+void JT_WakeThreadsByMask( uint64_t mask );
 
 inline void(*JT_ParallelCall)(void);
 inline void*(*JT_HelpWithAnything)(bool bShouldLoadPak);

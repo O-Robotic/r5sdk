@@ -20,6 +20,7 @@ add_sources( SOURCE_GROUP "Core"
     "dllmain.cpp"
     "init.cpp"
     "init.h"
+	"jobthread_hooks.cpp"
     "logdef.cpp"
     "logdef.h"
     "logger.cpp"
@@ -34,7 +35,7 @@ add_sources( SOURCE_GROUP "Core"
 )
 
 target_link_libraries( ${PROJECT_NAME} PRIVATE
-    "Synchronization.lib"
+	"Synchronization.lib"
     "bcrypt.lib"
     "crypt32.lib"
     "dbghelp.lib"

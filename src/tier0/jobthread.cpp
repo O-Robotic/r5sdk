@@ -24,7 +24,7 @@ uint32_t JT_GetCurrentThreadID()
 	return *(_DWORD *)( *(_QWORD *)CModule::GetThreadEnvironmentBlock()->ThreadLocalStoragePointer + 8 );
 }
 
-static void JT_WakeThreadsByMask( uint64_t mask )
+void JT_WakeThreadsByMask( uint64_t mask )
 {
     while (mask)
     {
@@ -184,10 +184,4 @@ void* HJT_HelpWithAnything(bool bShouldLoadPak)
 	//}
 	// Do stuff here after 'PakFile_Init()'.
 	return results;
-}
-
-void VJobThread::Detour(const bool bAttach) const
-{
-	DetourSetup( &v_JT_HelpWithJobTypesOrSleep, &JT_HelpWithJobTypesOrSleep, bAttach );
-	DetourSetup( &v_JT_WakeThreadsByMask, &JT_WakeThreadsByMask, bAttach );
 }
